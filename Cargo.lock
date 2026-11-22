@@ -784,6 +784,7 @@ name = "sohi-audio"
 version = "0.0.0"
 dependencies = [
  "rtrb",
+ "thiserror",
 ]
 
 [[package]]
