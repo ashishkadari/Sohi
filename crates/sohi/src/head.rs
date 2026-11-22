@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use sohi_core::config::ReducedMotion;
 use sohi_core::geometry::RectPx;
+use sohi_core::meter::{Envelope, display_level};
 use sohi_core::motion::{Pose, Slide};
 use sohi_core::visibility::{Effect, Input, Phase, Visibility};
 use sohi_core::visual::{ERROR_FLASH, VisualState};
@@ -90,6 +91,10 @@ pub struct Head {
     showing_test_card: bool,
     /// Perf mode only.
     perf: Option<PerfTrace>,
+    /// The latest mic level (display scale, 0–1) while listening.
+    level_target: f32,
+    /// The smoothed level the visor shows, and when it was last stepped.
+    level: (Envelope, Option<Instant>),
 }
 
 impl Head {
@@ -117,6 +122,8 @@ impl Head {
             visual_since: Instant::now(),
             error_at: None,
             dev_cycle: None,
+            level_target: 0.0,
+            level: (Envelope::default(), None),
             test_card: None,
             showing_test_card: false,
             perf: perf.then(PerfTrace::default),
@@ -170,6 +177,23 @@ impl Head {
         true
     }
 
+    /// The mic level (RMS, 0–1) while listening; the visor follows it
+    /// with a 30 ms attack and 150 ms release (spec §4.2).
+    pub fn set_level(&mut self, rms: f32) {
+        self.level_target = display_level(rms);
+    }
+
+    /// The visor level for a frame drawn at `now`.
+    fn visor_level(&mut self, now: Instant) -> f32 {
+        if self.visual != VisualState::Listening {
+            return 0.0;
+        }
+        let (envelope, last) = &mut self.level;
+        let dt = last.map_or(Duration::ZERO, |at| now.saturating_duration_since(at));
+        *last = Some(now);
+        envelope.step(self.level_target, dt)
+    }
+
     /// Changes what the head shows. A fully shown head redraws at once.
     pub fn set_visual(&mut self, visual: VisualState) {
         if visual == self.visual {
@@ -178,6 +202,8 @@ impl Head {
         log::info!("visual: {}", visual.name());
         self.visual = visual;
         self.visual_since = Instant::now();
+        self.level_target = 0.0;
+        self.level = (Envelope::default(), None);
         if self.phase() == Phase::Shown && self.motion.is_none() {
             self.present_pose(Pose::SHOWN);
             self.reschedule(Instant::now());
@@ -373,6 +399,7 @@ impl Head {
     fn present_pose(&mut self, pose: Pose) {
         let started = Instant::now();
         let (w, h) = (self.rect.width(), self.rect.height());
+        let visor = self.visor_level(started);
         self.prepare_renderer();
         let Some(renderer) = self.renderer.as_mut() else {
             log::warn!("cannot draw a {w}x{h} head");
@@ -383,7 +410,7 @@ impl Head {
             level: if self.dev_cycle.is_some() {
                 dev::fake_level(t)
             } else {
-                0.0
+                visor
             },
             error_age: self
                 .error_at

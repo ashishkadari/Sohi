@@ -35,6 +35,8 @@ pub enum RetractRule {
     ReplyDone,
     /// Text mode has focus or non-empty input: never (Esc closes).
     TextFocused,
+    /// A voice turn is speaking, transcribing or thinking: never.
+    Working,
     /// A text reply is shown and the pill is not focused.
     TextReplyUnfocused,
     /// Something failed. With the pill open the error stays until the
@@ -55,7 +57,7 @@ impl RetractRule {
             Self::ReplyDone => Some(REPLY_LINGER),
             Self::TextReplyUnfocused => Some(TEXT_REPLY_UNFOCUSED),
             Self::Error { pill_open: false } => Some(ERROR_LINGER),
-            Self::TextFocused | Self::Error { pill_open: true } => None,
+            Self::TextFocused | Self::Working | Self::Error { pill_open: true } => None,
         }
     }
 

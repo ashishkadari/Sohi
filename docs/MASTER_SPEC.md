@@ -369,6 +369,12 @@ The `State` struct has three independent regions:
 | Any | Escape | – | Idle | CancelTurn, StopPlayback, CloseMic, HidePill, Retract |
 | Any active | ProviderError(e) | – | Error → (1.2 s) Idle or TextEntry | SetVisual(Error), AppendBubble(e.user_message()) |
 
+> SPEC CHANGE (2026-11-22): until TTS lands (P5), a voice turn's transcript and reply show in the pill, opened
+> without focus, and the turn ends in TextEntry like a text turn. An empty transcript shows "Didn't catch that." in
+> the pill under the 2.5 s reply-done retract rule (TextEntry rather than Idle, so Esc and the retract close the
+> pill). The connectivity guard on Wake{Voice} arrives with the Connectivity region; until then an offline voice
+> turn fails at transcription with the usual error.
+
 ### 5.3 Connectivity transitions
 ~~~
                  request fails (DNS/connect/TLS/timeout)  or  NLM hint = no internet

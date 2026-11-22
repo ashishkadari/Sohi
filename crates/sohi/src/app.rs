@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use sohi_core::config::{ReducedMotion, WakeConfig};
+use sohi_core::config::{ReducedMotion, SttConfig, WakeConfig};
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::interaction::Event as TextEvent;
-use sohi_core::visibility::{Input, Phase, RetractRule};
+use sohi_core::visibility::Input;
 use sohi_core::wake::CornerSettings;
 use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{
@@ -43,6 +43,8 @@ pub struct Options {
     pub llm_fallback_model: String,
     /// `[persona] user_name`.
     pub user_name: String,
+    /// `[stt]`.
+    pub stt: SttConfig,
 }
 
 /// Everything the UI thread owns.
@@ -101,6 +103,7 @@ impl App {
                 model: options.llm_model.clone(),
                 fallback_model: options.llm_fallback_model.clone(),
                 user_name: options.user_name.clone(),
+                stt: options.stt.clone(),
             },
         );
         let mut app = Self {
@@ -195,10 +198,9 @@ impl App {
         });
     }
 
-    /// Reveals the head for a wake. Until voice exists (P3) nothing is
-    /// said, so the no-speech rule retracts it (spec §4.4).
+    /// A voice wake: reveal the head and listen (spec §3.3).
     fn wake(&mut self) {
-        self.head.input(RetractRule::NoSpeech.reveal());
+        self.text.event(TextEvent::VoiceWake, &mut self.head);
     }
 
     fn on_cursor_poll(&mut self) {
@@ -212,18 +214,13 @@ impl App {
         }
     }
 
-    /// The voice hotkey toggles: it wakes a parked (or retracting) head and
-    /// retracts a shown one. Until text mode exists the text hotkey only
-    /// wakes. Neither is affected by full-screen suppression.
+    /// The voice hotkey starts listening, stops it, or barges in on a
+    /// reply (spec §5.2). Neither hotkey is affected by full-screen
+    /// suppression.
     fn on_hotkey(&mut self, id: u16) {
-        let shown = matches!(self.head.phase(), Phase::Revealing | Phase::Shown);
         match id {
-            hotkeys::VOICE if shown => {
-                log::info!("hotkey: voice (retract)");
-                self.head.input(Input::Retract);
-            }
             hotkeys::VOICE => {
-                log::info!("wake: hotkey (voice)");
+                log::info!("hotkey: voice");
                 self.wake();
             }
             hotkeys::TEXT => {
@@ -255,7 +252,8 @@ impl App {
                 }
             }
             MenuCommand::Type => self.text.event(TextEvent::HeadClicked, &mut self.head),
-            MenuCommand::Talk | MenuCommand::ForceOffline | MenuCommand::StartWithWindows => {
+            MenuCommand::Talk => self.wake(),
+            MenuCommand::ForceOffline | MenuCommand::StartWithWindows => {
                 log::info!("{command:?} is not available yet");
             }
         }

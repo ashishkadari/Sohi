@@ -17,6 +17,7 @@ mod set_key;
 mod stt;
 mod text_mode;
 mod tray_menu;
+mod voice;
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -122,6 +123,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         llm_model: config.llm.model.clone(),
         llm_fallback_model: config.llm.anthropic_fallback().to_owned(),
         user_name: config.persona.user_name.clone(),
+        stt: config.stt.clone(),
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {

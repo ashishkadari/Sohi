@@ -1,7 +1,9 @@
-//! The Interaction region of the state machine, text paths (spec §5.2).
+//! The Interaction region of the state machine (spec §5.2): text turns,
+//! and voice turns up to the reply. Speaking arrives with TTS in P5; until
+//! then a voice turn's reply shows in the pill like a text reply.
 //!
 //! Pure: events in, effects out. The app carries the effects out on the
-//! head, the pill and the runtime thread. Voice states arrive in P4/P5.
+//! head, the pill and the runtime thread.
 //!
 //! Every turn has an id. Updates from a turn that is no longer current
 //! (it was cancelled, or a newer one started) are ignored, so a late
@@ -22,7 +24,18 @@ pub enum State {
     Idle,
     /// The pill is open, waiting for a prompt.
     TextEntry,
-    /// A text turn is running.
+    /// The mic is open for a voice turn.
+    Listening {
+        /// The voice turn.
+        turn: u64,
+    },
+    /// The utterance is being transcribed.
+    Transcribing {
+        /// The voice turn.
+        turn: u64,
+    },
+    /// The model is answering (a text turn, or a voice turn after its
+    /// transcript).
     Thinking {
         /// The running turn.
         turn: u64,
@@ -48,6 +61,31 @@ pub enum Event {
     },
     /// Enter in the pill.
     TextSubmitted(String),
+    /// A voice wake: the voice hotkey, a corner dwell, the tray's Talk or
+    /// a second launch. Toggles listening off when already listening.
+    VoiceWake,
+    /// The user started speaking.
+    SpeechStarted {
+        /// The voice turn.
+        turn: u64,
+    },
+    /// The utterance ended; it is being transcribed.
+    SpeechEnded {
+        /// The voice turn.
+        turn: u64,
+    },
+    /// Nobody spoke within 8 s; the mic is closed.
+    NoSpeech {
+        /// The voice turn.
+        turn: u64,
+    },
+    /// What the user said (possibly nothing).
+    Transcript {
+        /// The voice turn.
+        turn: u64,
+        /// The transcript.
+        text: String,
+    },
     /// The next piece of a reply.
     LlmDelta {
         /// The turn it belongs to.
@@ -102,6 +140,11 @@ pub enum Effect {
         /// The prompt.
         text: String,
     },
+    /// Open the mic and run a voice turn on the runtime thread.
+    StartListening {
+        /// Its id.
+        turn: u64,
+    },
     /// Cancel the running turn.
     CancelTurn {
         /// Its id.
@@ -148,15 +191,27 @@ impl Interaction {
         self.state
     }
 
+    /// The turn whose updates are still wanted, if one is running.
+    #[must_use]
+    pub fn current_turn(&self) -> Option<u64> {
+        match self.state {
+            State::Listening { turn } | State::Transcribing { turn } | State::Thinking { turn } => {
+                Some(turn)
+            }
+            _ => None,
+        }
+    }
+
     /// Feeds one event and returns the effects, in order.
     pub fn step(&mut self, event: Event) -> Vec<Effect> {
-        use State::{Error, Idle, TextEntry, Thinking};
+        use State::{Error, Idle, Listening, TextEntry, Thinking, Transcribing};
+        if let Some(effects) = self.voice_step(&event) {
+            return effects;
+        }
         match (self.state, event) {
             (Idle, Event::TextHotkey | Event::HeadClicked) => self.open(),
-            (TextEntry | Thinking { .. } | Error, Event::TextHotkey | Event::Escape) => {
-                self.close(true)
-            }
-            (TextEntry | Thinking { .. } | Error, Event::HeadGone) => self.close(false),
+            (state, Event::TextHotkey | Event::Escape) if state != Idle => self.close(true),
+            (state, Event::HeadGone) if state != Idle => self.close(false),
             (TextEntry | Thinking { .. } | Error, Event::HeadClicked) => {
                 vec![Effect::ShowPill { focus: true }]
             }
@@ -171,15 +226,16 @@ impl Interaction {
                     Effect::Keep(self.entry_rule()),
                 ]
             }
+            (
+                Listening { turn } | Transcribing { turn },
+                Event::TurnFailed { turn: t, message },
+            ) if t == turn => {
+                let mut effects = vec![Effect::ShowPill { focus: false }];
+                effects.extend(self.fail(message));
+                effects
+            }
             (Thinking { turn }, Event::TurnFailed { turn: t, message }) if t == turn => {
-                self.state = Error;
-                vec![
-                    Effect::AppendBubble(message),
-                    Effect::SetVisual(VisualState::Idle),
-                    Effect::FlashError,
-                    Effect::Keep(RetractRule::Error { pill_open: true }),
-                    Effect::StartErrorTimer,
-                ]
+                self.fail(message)
             }
             (Error, Event::ErrorShown) => {
                 self.state = TextEntry;
@@ -200,6 +256,85 @@ impl Interaction {
         }
     }
 
+    /// The voice transitions, or `None` for an event they do not cover.
+    fn voice_step(&mut self, event: &Event) -> Option<Vec<Effect>> {
+        use State::{Error, Idle, Listening, TextEntry, Thinking, Transcribing};
+        Some(match (self.state, event) {
+            (Idle, Event::VoiceWake) => self.listen(),
+            // The hotkey again stops listening.
+            (Listening { .. }, Event::VoiceWake) => self.close(true),
+            // Barge-in: drop whatever is going on and listen again.
+            (TextEntry | Transcribing { .. } | Thinking { .. } | Error, Event::VoiceWake) => {
+                let mut effects = self.close(false);
+                effects.extend(self.listen());
+                effects
+            }
+            (Listening { turn }, Event::SpeechStarted { turn: t }) if turn == *t => {
+                vec![Effect::Keep(RetractRule::Working)]
+            }
+            (Listening { turn }, Event::SpeechEnded { turn: t }) if turn == *t => {
+                self.state = Transcribing { turn };
+                vec![
+                    Effect::SetVisual(VisualState::Transcribing),
+                    Effect::Keep(RetractRule::Working),
+                ]
+            }
+            (Listening { turn }, Event::NoSpeech { turn: t }) if turn == *t => {
+                self.state = Idle;
+                vec![Effect::SetVisual(VisualState::Idle), Effect::Retract]
+            }
+            (Transcribing { turn }, Event::Transcript { turn: t, text }) if turn == *t => {
+                self.heard(turn, text)
+            }
+            _ => return None,
+        })
+    }
+
+    fn listen(&mut self) -> Vec<Effect> {
+        let turn = self.next_turn;
+        self.next_turn += 1;
+        self.state = State::Listening { turn };
+        vec![
+            Effect::Reveal(RetractRule::NoSpeech),
+            Effect::StartListening { turn },
+            Effect::SetVisual(VisualState::Listening),
+        ]
+    }
+
+    /// The transcript is in: show it and let the model answer, or say
+    /// nothing was heard. The pill shows without taking focus.
+    fn heard(&mut self, turn: u64, text: &str) -> Vec<Effect> {
+        self.focused = false;
+        self.has_input = false;
+        let text = text.trim();
+        if text.is_empty() {
+            self.state = State::TextEntry;
+            return vec![
+                Effect::ShowPill { focus: false },
+                Effect::SetBubble("Didn't catch that.".to_owned()),
+                Effect::SetVisual(VisualState::Idle),
+                Effect::Keep(RetractRule::ReplyDone),
+            ];
+        }
+        self.state = State::Thinking { turn };
+        vec![
+            Effect::ShowPill { focus: false },
+            Effect::SetBubble(format!("› {text}\n")),
+            Effect::SetVisual(VisualState::Thinking),
+        ]
+    }
+
+    fn fail(&mut self, message: String) -> Vec<Effect> {
+        self.state = State::Error;
+        vec![
+            Effect::AppendBubble(message),
+            Effect::SetVisual(VisualState::Idle),
+            Effect::FlashError,
+            Effect::Keep(RetractRule::Error { pill_open: true }),
+            Effect::StartErrorTimer,
+        ]
+    }
+
     fn open(&mut self) -> Vec<Effect> {
         self.state = State::TextEntry;
         // The pill opens focused, so it stays until Esc.
@@ -212,7 +347,7 @@ impl Interaction {
 
     fn close(&mut self, retract: bool) -> Vec<Effect> {
         let mut effects = Vec::new();
-        if let State::Thinking { turn } = self.state {
+        if let Some(turn) = self.current_turn() {
             effects.push(Effect::CancelTurn { turn });
             effects.push(Effect::SetVisual(VisualState::Idle));
         }
@@ -253,238 +388,4 @@ impl Interaction {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn submitted(m: &mut Interaction, text: &str) -> u64 {
-        m.step(Event::TextHotkey);
-        let effects = m.step(Event::TextSubmitted(text.to_owned()));
-        match m.state() {
-            State::Thinking { turn } => {
-                assert!(effects.contains(&Effect::StartTurn {
-                    turn,
-                    text: text.trim().to_owned()
-                }));
-                turn
-            }
-            other => panic!("not thinking: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn hotkey_opens_a_focused_pill_and_toggles_it_closed() {
-        let mut m = Interaction::new();
-        assert_eq!(
-            m.step(Event::TextHotkey),
-            [
-                Effect::Reveal(RetractRule::TextFocused),
-                Effect::ShowPill { focus: true }
-            ]
-        );
-        assert_eq!(m.state(), State::TextEntry);
-        assert_eq!(
-            m.step(Event::TextHotkey),
-            [Effect::HidePill, Effect::Retract]
-        );
-        assert_eq!(m.state(), State::Idle);
-    }
-
-    #[test]
-    fn a_head_click_opens_or_refocuses() {
-        let mut m = Interaction::new();
-        assert_eq!(m.step(Event::HeadClicked).len(), 2);
-        assert_eq!(
-            m.step(Event::HeadClicked),
-            [Effect::ShowPill { focus: true }]
-        );
-        assert_eq!(m.state(), State::TextEntry);
-    }
-
-    #[test]
-    fn a_text_turn_streams_then_returns_to_entry() {
-        let mut m = Interaction::new();
-        let turn = submitted(&mut m, "  what time is it?  ");
-        assert_eq!(
-            m.step(Event::LlmDelta {
-                turn,
-                text: "Late.".into()
-            }),
-            [Effect::AppendBubble("Late.".into())]
-        );
-        assert_eq!(
-            m.step(Event::LlmDone { turn }),
-            [
-                Effect::SetVisual(VisualState::Idle),
-                Effect::Keep(RetractRule::TextFocused)
-            ]
-        );
-        assert_eq!(m.state(), State::TextEntry);
-    }
-
-    #[test]
-    fn submitting_shows_the_prompt_and_starts_thinking() {
-        let mut m = Interaction::new();
-        m.step(Event::TextHotkey);
-        let effects = m.step(Event::TextSubmitted("hi".into()));
-        assert_eq!(effects[0], Effect::SetBubble("› hi\n".into()));
-        assert!(effects.contains(&Effect::SetVisual(VisualState::Thinking)));
-    }
-
-    #[test]
-    fn blank_prompts_are_ignored() {
-        let mut m = Interaction::new();
-        m.step(Event::TextHotkey);
-        assert_eq!(m.step(Event::TextSubmitted(" \t ".into())), []);
-        assert_eq!(m.state(), State::TextEntry);
-    }
-
-    #[test]
-    fn escape_mid_turn_cancels_and_late_updates_are_ignored() {
-        let mut m = Interaction::new();
-        let turn = submitted(&mut m, "long story");
-        assert_eq!(
-            m.step(Event::Escape),
-            [
-                Effect::CancelTurn { turn },
-                Effect::SetVisual(VisualState::Idle),
-                Effect::HidePill,
-                Effect::Retract
-            ]
-        );
-        let late = Event::LlmDelta {
-            turn,
-            text: "late".into(),
-        };
-        assert_eq!(m.step(late), []);
-        assert_eq!(m.step(Event::LlmDone { turn }), []);
-        assert_eq!(m.state(), State::Idle);
-    }
-
-    #[test]
-    fn updates_from_an_older_turn_never_reach_a_newer_one() {
-        let mut m = Interaction::new();
-        let first = submitted(&mut m, "one");
-        m.step(Event::Escape);
-        let second = submitted(&mut m, "two");
-        assert_ne!(first, second);
-        let stale = Event::LlmDelta {
-            turn: first,
-            text: "old".into(),
-        };
-        assert_eq!(m.step(stale), []);
-        assert_eq!(m.state(), State::Thinking { turn: second });
-    }
-
-    #[test]
-    fn a_failure_shows_then_returns_to_entry() {
-        let mut m = Interaction::new();
-        let turn = submitted(&mut m, "hi");
-        let effects = m.step(Event::TurnFailed {
-            turn,
-            message: "No key.".into(),
-        });
-        assert_eq!(effects[0], Effect::AppendBubble("No key.".into()));
-        assert!(effects.contains(&Effect::FlashError));
-        assert!(effects.contains(&Effect::StartErrorTimer));
-        assert!(effects.contains(&Effect::Keep(RetractRule::Error { pill_open: true })));
-        assert_eq!(m.state(), State::Error);
-        assert_eq!(
-            m.step(Event::ErrorShown),
-            [Effect::Keep(RetractRule::TextFocused)]
-        );
-        assert_eq!(m.state(), State::TextEntry);
-    }
-
-    #[test]
-    fn losing_focus_after_a_reply_starts_the_unfocused_timer() {
-        let mut m = Interaction::new();
-        let turn = submitted(&mut m, "hi");
-        m.step(Event::LlmDone { turn });
-        let blur = Event::PillFocus {
-            focused: false,
-            has_input: false,
-        };
-        assert_eq!(
-            m.step(blur),
-            [Effect::Keep(RetractRule::TextReplyUnfocused)]
-        );
-        // Typed text keeps it up even without focus.
-        let typed = Event::PillFocus {
-            focused: false,
-            has_input: true,
-        };
-        assert_eq!(m.step(typed), [Effect::Keep(RetractRule::TextFocused)]);
-    }
-
-    #[test]
-    fn focus_changes_mid_turn_do_not_retract() {
-        let mut m = Interaction::new();
-        submitted(&mut m, "hi");
-        let blur = Event::PillFocus {
-            focused: false,
-            has_input: false,
-        };
-        assert_eq!(m.step(blur), []);
-        assert!(matches!(m.state(), State::Thinking { .. }));
-    }
-
-    #[test]
-    fn the_head_retracting_closes_the_pill_without_retracting_again() {
-        let mut m = Interaction::new();
-        submitted(&mut m, "hi");
-        let effects = m.step(Event::HeadGone);
-        assert!(matches!(effects[0], Effect::CancelTurn { .. }));
-        assert!(effects.contains(&Effect::HidePill));
-        assert!(!effects.contains(&Effect::Retract));
-    }
-
-    /// Every event in every state: nothing panics, and idle ignores
-    /// everything except the two ways in.
-    #[test]
-    fn every_event_in_every_state_is_handled() {
-        let events = || {
-            vec![
-                Event::TextHotkey,
-                Event::HeadClicked,
-                Event::PillFocus {
-                    focused: true,
-                    has_input: false,
-                },
-                Event::TextSubmitted("x".into()),
-                Event::LlmDelta {
-                    turn: 1,
-                    text: "d".into(),
-                },
-                Event::LlmDone { turn: 1 },
-                Event::TurnFailed {
-                    turn: 1,
-                    message: "m".into(),
-                },
-                Event::ErrorShown,
-                Event::Escape,
-                Event::HeadGone,
-            ]
-        };
-        for event in events() {
-            let mut m = Interaction::new();
-            let opens = matches!(event, Event::TextHotkey | Event::HeadClicked);
-            let effects = m.step(event.clone());
-            assert_eq!(!effects.is_empty(), opens, "idle + {event:?}");
-        }
-        for setup in 0..3 {
-            for event in events() {
-                let mut m = Interaction::new();
-                let turn = submitted(&mut m, "x");
-                match setup {
-                    0 => drop(m.step(Event::LlmDone { turn })),
-                    1 => {}
-                    _ => drop(m.step(Event::TurnFailed {
-                        turn,
-                        message: "m".into(),
-                    })),
-                }
-                let _ = m.step(event);
-            }
-        }
-    }
-}
+mod tests;
