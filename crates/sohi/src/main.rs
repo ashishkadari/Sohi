@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 #![windows_subsystem = "windows"]
 
+mod config_file;
 mod logger;
 
 use std::process::ExitCode;
@@ -60,6 +61,9 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     let _ = logger::init(&logger::default_dir(), log::LevelFilter::Info);
     logger::install_panic_hook();
     log::info!("sohi {} starting", env!("CARGO_PKG_VERSION"));
+
+    let config = config_file::load(&config_file::default_path());
+    log::set_max_level(config_file::level_filter(config.log.level));
 
     let (args, unknown) = Args::parse(std::env::args().skip(1));
     if !unknown.is_empty() {
