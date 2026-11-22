@@ -1,7 +1,33 @@
 //! Developer-only helpers: the `--dev-test-card` pulse animation and its
-//! frame-cost statistics. Nothing here is part of the final widget.
+//! frame-cost statistics, and the `--dev-states` cycle through every
+//! visual state. Nothing here is part of the final widget.
 
 use std::time::{Duration, Instant};
+
+use sohi_core::visual::VisualState;
+
+/// How long `--dev-states` shows each state.
+pub const STATE_HOLD: Duration = Duration::from_millis(2500);
+/// When, into Thinking, `--dev-states` flashes an error.
+pub const ERROR_AT: Duration = Duration::from_millis(1200);
+
+/// Total length of the `--dev-states` cycle.
+pub fn cycle_length() -> Duration {
+    STATE_HOLD * u32::try_from(VisualState::ALL.len()).unwrap_or(8)
+}
+
+/// The state shown `elapsed` into the `--dev-states` cycle (the last one
+/// once the cycle is over).
+pub fn cycle_state(elapsed: Duration) -> VisualState {
+    let index = usize::try_from(elapsed.as_millis() / STATE_HOLD.as_millis()).unwrap_or(usize::MAX);
+    VisualState::ALL[index.min(VisualState::ALL.len() - 1)]
+}
+
+/// A speech-like 0–1 level for demoing Listening and Speaking.
+pub fn fake_level(t: Duration) -> f32 {
+    let t = t.as_secs_f32();
+    ((t * 7.0).sin() * (t * 2.3).sin()).abs()
+}
 
 /// How long the test card pulses before going static.
 pub const PULSE_DURATION: Duration = Duration::from_secs(3);
@@ -84,6 +110,23 @@ mod tests {
         let pulse = TestCardPulse::new(start);
         assert!(pulse.level(start).is_some());
         assert!(pulse.level(start + PULSE_DURATION).is_none());
+    }
+
+    #[test]
+    fn dev_cycle_visits_every_state_in_order() {
+        for (i, state) in VisualState::ALL.into_iter().enumerate() {
+            let at = STATE_HOLD * u32::try_from(i).unwrap() + STATE_HOLD / 2;
+            assert_eq!(cycle_state(at), state);
+        }
+        assert_eq!(cycle_state(cycle_length() * 2), VisualState::ForcedOffline);
+    }
+
+    #[test]
+    fn fake_level_stays_in_range() {
+        for ms in (0..5000).step_by(7) {
+            let v = fake_level(Duration::from_millis(ms));
+            assert!((0.0..=1.0).contains(&v));
+        }
     }
 
     #[test]

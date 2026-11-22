@@ -12,6 +12,8 @@ use windows::Win32::Graphics::Gdi::{
     DeleteDC, DeleteObject, HBITMAP, HDC, HGDIOBJ, SelectObject,
 };
 
+use sohi_core::geometry::RectPx;
+
 use crate::WinError;
 
 pub(crate) struct Surface {
@@ -138,9 +140,49 @@ pub(crate) fn swizzle_shifted(src: &[u8], dst: &mut [u8], width: usize, shift: u
     }
 }
 
+/// Like [`swizzle_rgba_to_bgra`], but only for the pixels inside `rect`
+/// (already clipped to the `width`-pixel-wide buffers).
+pub(crate) fn swizzle_region(src: &[u8], dst: &mut [u8], width: usize, rect: RectPx) {
+    let (Ok(left), Ok(right), Ok(top), Ok(bottom)) = (
+        usize::try_from(rect.left),
+        usize::try_from(rect.right),
+        usize::try_from(rect.top),
+        usize::try_from(rect.bottom),
+    ) else {
+        return;
+    };
+    if left >= right {
+        return;
+    }
+    let stride = width * 4;
+    for y in top..bottom {
+        let span = y * stride + left * 4..y * stride + right * 4;
+        if let (Some(s), Some(d)) = (src.get(span.clone()), dst.get_mut(span)) {
+            swizzle_rgba_to_bgra(s, d);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn region_swizzle_touches_only_the_rectangle() {
+        // 3x2 image; update only the middle pixel of the second row.
+        let src: Vec<u8> = (1..=24).collect();
+        let mut dst = [0u8; 24];
+        let rect = RectPx {
+            left: 1,
+            top: 1,
+            right: 2,
+            bottom: 2,
+        };
+        swizzle_region(&src, &mut dst, 3, rect);
+        let mut expected = [0u8; 24];
+        expected[16..20].copy_from_slice(&[19, 18, 17, 20]);
+        assert_eq!(dst, expected);
+    }
 
     #[test]
     fn shifted_swizzle_clears_left_and_clips_right() {

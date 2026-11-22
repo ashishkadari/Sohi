@@ -8,19 +8,23 @@
 use std::cell::Cell;
 
 use sohi_core::geometry::RectPx;
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, SIZE, TRUE, WPARAM};
+use windows::Win32::Foundation::{
+    COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, TRUE, WPARAM,
+};
 use windows::Win32::Graphics::Dwm::{DWMWA_EXCLUDED_FROM_PEEK, DwmSetWindowAttribute};
-use windows::Win32::Graphics::Gdi::{AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION, ClientToScreen};
+use windows::Win32::Graphics::Gdi::{
+    AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION, ClientToScreen, HDC,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
     HWND_TOPMOST, IsWindowVisible, MA_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow,
-    WM_DPICHANGED, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_RBUTTONUP, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow, ULW_ALPHA, UPDATELAYEREDWINDOWINFO,
+    UpdateLayeredWindowIndirect, WM_DPICHANGED, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+    WM_RBUTTONUP, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::hwnd::{OwnedHwnd, WindowSpec, WndHandler, create_window, signed_words};
-use crate::surface::{Surface, swizzle_shifted};
+use crate::surface::{Surface, swizzle_region, swizzle_shifted};
 use crate::{EventQueue, WinError, WinEvent};
 
 /// `WM_MOUSELEAVE` (0x02A3). The `windows` crate defines it under
@@ -40,6 +44,19 @@ pub struct Frame<'a> {
     pub height: u32,
     /// Row-major RGBA bytes, `width * height * 4` long.
     pub rgba: &'a [u8],
+    /// The only pixels that changed since the previous frame (window
+    /// coordinates), or `None` if any may have. Ignored unless the window
+    /// position, size, opacity and shift are unchanged too.
+    pub dirty: Option<RectPx>,
+}
+
+/// What the last `present` put on screen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Presented {
+    dst: POINT,
+    size: SIZE,
+    opacity: u8,
+    shift: u32,
 }
 
 /// The head widget window. Created hidden.
@@ -47,6 +64,10 @@ pub struct HeadWindow {
     hwnd: OwnedHwnd,
     /// Lazily allocated on the first `present`, resized on DPI change.
     surface: Option<Surface>,
+    /// The last presented frame's placement. Unchanged position and size
+    /// are not passed again (keeps the update off the move/resize path),
+    /// and an unchanged placement allows a dirty-rectangle update.
+    last: Option<Presented>,
 }
 
 impl HeadWindow {
@@ -79,6 +100,7 @@ impl HeadWindow {
         Ok(Self {
             hwnd,
             surface: None,
+            last: None,
         })
     }
 
@@ -102,48 +124,43 @@ impl HeadWindow {
             return Err(WinError::invalid("UpdateLayeredWindow", "frame size"));
         }
         if self.surface.as_ref().map(Surface::size) != Some((frame.width, frame.height)) {
-            // Drop the old DIB before allocating the new one.
+            // Drop the old DIB before allocating the new one; its pixels
+            // are gone, so the next update must be a full one.
             self.surface = None;
+            self.last = None;
             self.surface = Some(Surface::new(frame.width, frame.height)?);
         }
         let Some(surface) = self.surface.as_mut() else {
             return Err(WinError::invalid("UpdateLayeredWindow", "surface"));
         };
-        swizzle_shifted(
-            frame.rgba,
-            surface.pixels_mut(),
-            frame.width as usize,
-            shift as usize,
-        );
-        let dst = POINT { x, y };
-        let size = SIZE {
-            cx: i32::try_from(frame.width).unwrap_or(0),
-            cy: i32::try_from(frame.height).unwrap_or(0),
+        let now = Presented {
+            dst: POINT { x, y },
+            size: SIZE {
+                cx: i32::try_from(frame.width).unwrap_or(0),
+                cy: i32::try_from(frame.height).unwrap_or(0),
+            },
+            opacity,
+            shift,
         };
-        let src = POINT { x: 0, y: 0 };
-        let blend = BLENDFUNCTION {
-            BlendOp: u8::try_from(AC_SRC_OVER).unwrap_or(0),
-            BlendFlags: 0,
-            SourceConstantAlpha: opacity,
-            AlphaFormat: u8::try_from(AC_SRC_ALPHA).unwrap_or(1),
-        };
-        // SAFETY: valid window and memory DC with the DIB selected; all
-        // pointers refer to locals that outlive the call. A null screen DC
-        // makes the system use the default palette.
-        unsafe {
-            UpdateLayeredWindow(
-                self.hwnd.raw(),
-                None,
-                Some(&raw const dst),
-                Some(&raw const size),
-                Some(surface.dc()),
-                Some(&raw const src),
-                COLORREF(0),
-                Some(&raw const blend),
-                ULW_ALPHA,
-            )
+        let moved = self
+            .last
+            .is_none_or(|l| l.dst != now.dst || l.size != now.size);
+        let dirty = frame
+            .dirty
+            .filter(|_| self.last == Some(now) && shift == 0)
+            .map(|d| clip(d, frame.width, frame.height));
+        match dirty {
+            Some(d) => swizzle_region(frame.rgba, surface.pixels_mut(), frame.width as usize, d),
+            None => swizzle_shifted(
+                frame.rgba,
+                surface.pixels_mut(),
+                frame.width as usize,
+                shift as usize,
+            ),
         }
-        .map_err(|e| WinError::api("UpdateLayeredWindow", &e))
+        let result = update_layered(self.hwnd.raw(), surface.dc(), &now, moved, dirty);
+        self.last = result.is_ok().then_some(now);
+        result
     }
 
     /// Shows the window without activating it and re-asserts topmost.
@@ -195,6 +212,73 @@ impl HeadWindow {
     #[cfg(test)]
     pub(crate) fn raw(&self) -> HWND {
         self.hwnd.raw()
+    }
+}
+
+/// Hands the DIB in `src_dc` to the compositor. Position and size are
+/// passed only when `moved`; `dirty` limits the update to one rectangle.
+fn update_layered(
+    hwnd: HWND,
+    src_dc: HDC,
+    now: &Presented,
+    moved: bool,
+    dirty: Option<RectPx>,
+) -> Result<(), WinError> {
+    let src = POINT { x: 0, y: 0 };
+    let blend = BLENDFUNCTION {
+        BlendOp: u8::try_from(AC_SRC_OVER).unwrap_or(0),
+        BlendFlags: 0,
+        SourceConstantAlpha: now.opacity,
+        AlphaFormat: u8::try_from(AC_SRC_ALPHA).unwrap_or(1),
+    };
+    let dirty_rect = dirty.map(|d| RECT {
+        left: d.left,
+        top: d.top,
+        right: d.right,
+        bottom: d.bottom,
+    });
+    let info = UPDATELAYEREDWINDOWINFO {
+        cbSize: u32::try_from(size_of::<UPDATELAYEREDWINDOWINFO>()).unwrap_or(0),
+        pptDst: if moved {
+            &raw const now.dst
+        } else {
+            std::ptr::null()
+        },
+        psize: if moved {
+            &raw const now.size
+        } else {
+            std::ptr::null()
+        },
+        hdcSrc: src_dc,
+        pptSrc: &raw const src,
+        crKey: COLORREF(0),
+        pblend: &raw const blend,
+        dwFlags: ULW_ALPHA,
+        prcDirty: dirty_rect
+            .as_ref()
+            .map_or(std::ptr::null(), std::ptr::from_ref),
+        ..Default::default()
+    };
+    // SAFETY: valid window and memory DC with the DIB selected; every
+    // pointer in `info` is null or refers to a local (or `now`) that
+    // outlives the call. A null destination DC makes the system use the
+    // default palette.
+    if unsafe { UpdateLayeredWindowIndirect(hwnd, &raw const info) }.as_bool() {
+        Ok(())
+    } else {
+        Err(WinError::last("UpdateLayeredWindowIndirect"))
+    }
+}
+
+/// `r` clipped to a `width` x `height` window.
+fn clip(r: RectPx, width: u32, height: u32) -> RectPx {
+    let w = i32::try_from(width).unwrap_or(i32::MAX);
+    let h = i32::try_from(height).unwrap_or(i32::MAX);
+    RectPx {
+        left: r.left.clamp(0, w),
+        top: r.top.clamp(0, h),
+        right: r.right.clamp(0, w),
+        bottom: r.bottom.clamp(0, h),
     }
 }
 

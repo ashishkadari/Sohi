@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use sohi_core::config::ReducedMotion;
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::motion::{LAUNCH_PEEK_HOLD, Pose, Slide};
-use sohi_core::visual::VisualState;
+use sohi_core::visual::{ERROR_FLASH, VisualState};
 use sohi_render::{HeadRenderer, Scene};
 use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{
@@ -15,7 +15,7 @@ use sohi_win::{
     TrayIcon, WinError, WinEvent,
 };
 
-use crate::dev::{TestCardPulse, percentile};
+use crate::dev::{self, TestCardPulse, percentile};
 use crate::tray_menu::{self, MenuCommand, MenuState};
 
 /// Files the menu can open.
@@ -80,6 +80,16 @@ pub struct App {
     reduced: bool,
     /// Draws the head; recreated when the window size changes.
     renderer: Option<HeadRenderer>,
+    /// What the head shows.
+    visual: VisualState,
+    /// When `visual` began (its animation clock).
+    visual_since: Instant,
+    /// When the last error happened (drives the amber flash).
+    error_at: Option<Instant>,
+    /// `--dev-states`: when the cycle through every state began.
+    dev_cycle: Option<Instant>,
+    /// Period the frame timer is ticking at, if any.
+    tick: Option<Duration>,
     /// Perf mode only.
     perf: Option<PerfTrace>,
 }
@@ -128,6 +138,11 @@ impl App {
             reduced_pref: options.reduced_motion,
             reduced: false,
             renderer: None,
+            visual: VisualState::Idle,
+            visual_since: Instant::now(),
+            error_at: None,
+            dev_cycle: None,
+            tick: None,
             perf: options.perf.then(PerfTrace::default),
         };
         app.relayout();
@@ -172,8 +187,41 @@ impl App {
         self.head.show();
         self.showing_test_card = true;
         self.test_card = Some(TestCardPulse::new(Instant::now()));
-        self.timer.start(FRAME_30_FPS);
+        self.set_tick(Some(FRAME_30_FPS));
         Ok(())
+    }
+
+    /// Changes what the head shows. Takes effect on the next frame; a
+    /// shown head redraws at once.
+    pub fn set_visual(&mut self, visual: VisualState) {
+        if visual == self.visual {
+            return;
+        }
+        log::info!("visual: {}", visual.name());
+        self.visual = visual;
+        self.visual_since = Instant::now();
+        if let Visibility::Shown { retract_at } = self.visibility {
+            self.present_pose(Pose::SHOWN);
+            self.schedule_shown(Instant::now(), retract_at);
+        }
+    }
+
+    /// Starts the two amber error flashes over the current state.
+    pub fn flash_error(&mut self) {
+        let now = Instant::now();
+        self.error_at = Some(now);
+        if let Visibility::Shown { retract_at } = self.visibility {
+            self.schedule_shown(now, retract_at);
+        }
+    }
+
+    /// `--dev-states`: reveals the head and shows every visual state in
+    /// turn, with a synthetic mic/voice level, then retracts.
+    pub fn start_dev_cycle(&mut self) {
+        let now = Instant::now();
+        self.dev_cycle = Some(now);
+        self.set_visual(VisualState::ALL[0]);
+        self.peek(dev::cycle_length());
     }
 
     /// Slides the head in, keeps it shown for `hold`, then slides it out.
@@ -201,13 +249,12 @@ impl App {
                     .unwrap_or(Pose::SHOWN);
                 self.present_pose(first);
                 self.head.show();
-                self.timer.start(FRAME_60_FPS);
+                self.set_tick(Some(FRAME_60_FPS));
             }
             Visibility::Shown { .. } => {
-                self.visibility = Visibility::Shown {
-                    retract_at: now + hold,
-                };
-                self.timer.start(hold);
+                let retract_at = now + hold;
+                self.visibility = Visibility::Shown { retract_at };
+                self.schedule_shown(now, retract_at);
             }
             Visibility::Sliding { .. } => {}
         }
@@ -215,23 +262,24 @@ impl App {
 
     fn step_visibility(&mut self, now: Instant) {
         match self.visibility {
-            Visibility::Parked => self.timer.stop(),
+            Visibility::Parked => self.set_tick(None),
             Visibility::Sliding { slide, start, hold } => {
                 match slide.pose(now.saturating_duration_since(start), self.reduced) {
                     Some(pose) => self.present_pose(pose),
                     None if slide == Slide::Reveal => {
+                        let retract_at = now + hold;
+                        self.visibility = Visibility::Shown { retract_at };
                         self.present_pose(Pose::SHOWN);
-                        // Static until the hold ends: one tick at the deadline.
-                        self.visibility = Visibility::Shown {
-                            retract_at: now + hold,
-                        };
-                        self.timer.start(hold);
+                        self.schedule_shown(now, retract_at);
                     }
                     None => {
                         self.head.hide();
                         self.visibility = Visibility::Parked;
-                        self.timer.stop();
+                        self.set_tick(None);
                         self.report_frame_costs();
+                        if self.dev_cycle.take().is_some() {
+                            self.set_visual(VisualState::Idle);
+                        }
                         log::info!("parked");
                     }
                 }
@@ -243,11 +291,69 @@ impl App {
                         start: now,
                         hold: Duration::ZERO,
                     };
-                    self.timer.start(FRAME_60_FPS);
-                } else {
-                    self.timer.start(retract_at - now);
+                    self.set_tick(Some(FRAME_60_FPS));
+                    return;
                 }
+                self.step_dev_cycle(now);
+                if self.frame_period(now).is_some() {
+                    self.present_pose(Pose::SHOWN);
+                }
+                self.schedule_shown(now, retract_at);
             }
+        }
+    }
+
+    /// While shown: tick at the state's frame rate, or, for a static state,
+    /// once at the retract deadline.
+    fn schedule_shown(&mut self, now: Instant, retract_at: Instant) {
+        let period = self
+            .frame_period(now)
+            .unwrap_or_else(|| retract_at.saturating_duration_since(now));
+        self.set_tick(Some(period));
+    }
+
+    /// The frame period for what is on screen now, or `None` if static.
+    fn frame_period(&self, now: Instant) -> Option<Duration> {
+        let flashing = self
+            .error_at
+            .is_some_and(|at| now.saturating_duration_since(at) < ERROR_FLASH);
+        if flashing {
+            return Some(FRAME_60_FPS);
+        }
+        if self.dev_cycle.is_some() && self.visual.fps().is_none() {
+            // The dev cycle must keep ticking to leave a static state.
+            return Some(FRAME_30_FPS);
+        }
+        match self.visual.fps()? {
+            fps if fps > 30 => Some(FRAME_60_FPS),
+            _ => Some(FRAME_30_FPS),
+        }
+    }
+
+    /// Starts, retimes or stops the frame timer, only when the period
+    /// actually changes (restarting every tick would drift).
+    fn set_tick(&mut self, period: Option<Duration>) {
+        if period == self.tick {
+            return;
+        }
+        self.tick = period;
+        match period {
+            Some(p) => self.timer.start(p),
+            None => self.timer.stop(),
+        }
+    }
+
+    /// `--dev-states`: moves to the state for this point in the cycle, and
+    /// flashes an error once partway through Thinking.
+    fn step_dev_cycle(&mut self, now: Instant) {
+        let Some(start) = self.dev_cycle else {
+            return;
+        };
+        let state = dev::cycle_state(now.saturating_duration_since(start));
+        self.set_visual(state);
+        let in_state = now.saturating_duration_since(self.visual_since);
+        if state == VisualState::Thinking && in_state >= dev::ERROR_AT && self.error_at.is_none() {
+            self.flash_error();
         }
     }
 
@@ -256,17 +362,30 @@ impl App {
     fn present_pose(&mut self, pose: Pose) {
         let started = Instant::now();
         let (w, h) = (self.head_rect.width(), self.head_rect.height());
-        if self.renderer.as_ref().map(HeadRenderer::size) != Some((w, h)) {
-            self.renderer = HeadRenderer::new(w, h);
-        }
+        self.prepare_renderer();
         let Some(renderer) = self.renderer.as_mut() else {
             log::warn!("cannot draw a {w}x{h} head");
             return;
         };
+        let t = started.saturating_duration_since(self.visual_since);
+        let scene = Scene {
+            level: if self.dev_cycle.is_some() {
+                dev::fake_level(t)
+            } else {
+                0.0
+            },
+            error_age: self
+                .error_at
+                .map(|at| started.saturating_duration_since(at))
+                .filter(|age| *age < ERROR_FLASH),
+            ..Scene::new(self.visual, t)
+        };
+        let pixels = renderer.render(&scene);
         let frame = Frame {
             width: w,
             height: h,
-            rgba: renderer.render(&Scene::new(VisualState::Idle, Duration::ZERO)),
+            rgba: pixels.rgba,
+            dirty: pixels.dirty,
         };
         let alpha = pose.alpha_u8();
         let result = self.head.present(
@@ -289,6 +408,20 @@ impl App {
         }
     }
 
+    /// Makes sure a renderer for the current window size exists and its
+    /// cached hood is drawn, so that one-off work stays off the frame path
+    /// (called on every layout change, before any frame is needed).
+    fn prepare_renderer(&mut self) {
+        let size = (self.head_rect.width(), self.head_rect.height());
+        if self.renderer.as_ref().map(HeadRenderer::size) == Some(size) {
+            return;
+        }
+        self.renderer = HeadRenderer::new(size.0, size.1);
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.render(&Scene::new(self.visual, Duration::ZERO));
+        }
+    }
+
     /// Perf mode: logs the present cost of the frames since the last report.
     fn report_frame_costs(&mut self) {
         let Some(costs) = self.perf.as_mut().map(|t| &mut t.costs) else {
@@ -298,7 +431,7 @@ impl App {
             return;
         }
         costs.sort_unstable();
-        crate::perf::on_slide_frames(costs.len(), percentile(costs, 95), costs[costs.len() - 1]);
+        crate::perf::on_head_frames(costs.len(), percentile(costs, 95), costs[costs.len() - 1]);
         costs.clear();
     }
 
@@ -309,7 +442,7 @@ impl App {
         };
         let Some(level) = pulse.level(Instant::now()) else {
             // Static from here on: the last frame stays, with zero redraws.
-            self.timer.stop();
+            self.set_tick(None);
             if let Some(pulse) = self.test_card.take() {
                 log::info!("test card pulse done: {}", pulse.report());
             }
@@ -375,6 +508,7 @@ impl App {
             width: w,
             height: h,
             rgba: &pixels,
+            dirty: None,
         };
         self.head
             .present(frame, self.head_rect.left, self.head_rect.top, 255, 0)
@@ -405,6 +539,7 @@ impl App {
             );
             self.head.set_rect(rect);
             self.head_rect = rect;
+            self.prepare_renderer();
             return true;
         }
         false

@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use sohi_core::geometry::HEAD_WINDOW_DIP;
+use sohi_core::geometry::{HEAD_WINDOW_DIP, RectPx};
 use sohi_core::visual::{ERROR_FLASH, VisualState};
 use tiny_skia::{
     Color, FillRule, LineCap, Paint, Path, PathBuilder, Pixmap, Rect, Stroke, StrokeDash, Transform,
@@ -39,6 +39,9 @@ const EYE_RADIUS: f32 = 1.9;
 const COLLAR: (f32, f32) = (56.0, 64.7);
 const COLLAR_WIDTH: f32 = 10.0;
 const COLLAR_HEIGHT: f32 = 1.4;
+/// Bounds (left, top, right, bottom) of everything the eyes and collar can
+/// touch at any level, with a margin for anti-aliasing.
+const FACE_REGION: (f32, f32, f32, f32) = (43.0, 31.0, 69.0, 68.0);
 
 /// Everything that changes from frame to frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -101,6 +104,16 @@ impl Tone {
     }
 }
 
+/// One rendered frame.
+#[derive(Debug, Clone, Copy)]
+pub struct Rendered<'a> {
+    /// RGBA, premultiplied, `width * height * 4` bytes.
+    pub rgba: &'a [u8],
+    /// The only pixels that differ from the previous frame, or `None` if
+    /// any may.
+    pub dirty: Option<RectPx>,
+}
+
 /// Renders the head at one pixel size. Recreate it when the DPI changes.
 pub struct HeadRenderer {
     scale: f32,
@@ -109,6 +122,8 @@ pub struct HeadRenderer {
     body: Pixmap,
     body_tone: Option<Tone>,
     hood: Path,
+    /// Everything outside the face region in the previous frame.
+    prev_frame: Option<FrameKey>,
 }
 
 impl HeadRenderer {
@@ -124,6 +139,7 @@ impl HeadRenderer {
             body: Pixmap::new(width, height)?,
             body_tone: None,
             hood: hood_path()?,
+            prev_frame: None,
         })
     }
 
@@ -133,9 +149,10 @@ impl HeadRenderer {
         (self.pixmap.width(), self.pixmap.height())
     }
 
-    /// Draws `scene` and returns the frame: RGBA, premultiplied,
-    /// `width * height * 4` bytes.
-    pub fn render(&mut self, scene: &Scene) -> &[u8] {
+    /// Draws `scene`. When only the eyes and collar changed since the last
+    /// frame, [`Rendered::dirty`] names the face region so the caller can
+    /// update just that part of the window.
+    pub fn render(&mut self, scene: &Scene) -> Rendered<'_> {
         let tone = Tone::of(scene.state);
         if self.body_tone != Some(tone) {
             self.draw_body(tone);
@@ -143,6 +160,9 @@ impl HeadRenderer {
         }
         self.pixmap.data_mut().copy_from_slice(self.body.data());
         let look = Look::of(scene);
+        let key = FrameKey::of(&look, tone);
+        let dirty = (self.prev_frame == Some(key)).then(|| self.face_region_px());
+        self.prev_frame = Some(key);
         let ts = Transform::from_scale(self.scale, self.scale);
         let pm = &mut self.pixmap;
         draw_frame(pm, ts, &look);
@@ -154,7 +174,29 @@ impl HeadRenderer {
         if let Some(outlined) = look.badge {
             draw_badge(pm, ts, outlined);
         }
-        self.pixmap.data()
+        Rendered {
+            rgba: self.pixmap.data(),
+            dirty,
+        }
+    }
+
+    /// [`FACE_REGION`] in pixels, rounded outwards.
+    fn face_region_px(&self) -> RectPx {
+        let (left, top, right, bottom) = FACE_REGION;
+        let px = |v: f32, up: bool| {
+            let v = v * self.scale;
+            let v = if up { v.ceil() } else { v.floor() };
+            // Small positive values: the window is a few hundred pixels.
+            #[allow(clippy::cast_possible_truncation)]
+            let v = v as i32;
+            v
+        };
+        RectPx {
+            left: px(left, false),
+            top: px(top, false),
+            right: px(right, true),
+            bottom: px(bottom, true),
+        }
     }
 
     fn draw_body(&mut self, tone: Tone) {
@@ -279,6 +321,32 @@ impl Look {
             look.brackets = [1.0; 4];
         }
         look
+    }
+}
+
+/// Everything a frame draws outside [`FACE_REGION`]; when it matches the
+/// previous frame, only the face region can differ. Floats are compared
+/// bit for bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FrameKey {
+    tone: Tone,
+    frame: [u8; 3],
+    brackets: [u32; 4],
+    hairline: (u32, bool),
+    scanline: Option<u32>,
+    badge: Option<bool>,
+}
+
+impl FrameKey {
+    fn of(look: &Look, tone: Tone) -> Self {
+        Self {
+            tone,
+            frame: look.frame,
+            brackets: look.brackets.map(f32::to_bits),
+            hairline: (look.hairline.0.to_bits(), look.hairline.1),
+            scanline: look.scanline.map(f32::to_bits),
+            badge: look.badge,
+        }
     }
 }
 
@@ -463,8 +531,66 @@ mod tests {
             level,
             ..Scene::new(state, t)
         };
-        let frame = r.render(&scene).to_vec();
+        let frame = r.render(&scene).rgba.to_vec();
         (r, frame)
+    }
+
+    /// Fails if any pixel outside `dirty` differs between the frames.
+    fn assert_changes_inside(before: &[u8], after: &[u8], width: usize, dirty: RectPx) {
+        for (i, (old, new)) in before.chunks(4).zip(after.chunks(4)).enumerate() {
+            let col = i32::try_from(i % width).unwrap();
+            let row = i32::try_from(i / width).unwrap();
+            let inside =
+                col >= dirty.left && col < dirty.right && row >= dirty.top && row < dirty.bottom;
+            assert!(
+                inside || old == new,
+                "({col}, {row}) changed outside {dirty:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn idle_frames_change_only_inside_the_face_region() {
+        let mut renderer = HeadRenderer::new(168, 126).unwrap();
+        let first = renderer.render(&Scene::new(VisualState::Idle, Duration::ZERO));
+        assert!(first.dirty.is_none(), "first frame is full");
+        let before = first.rgba.to_vec();
+        let second = renderer.render(&Scene::new(VisualState::Idle, MS(1000)));
+        let dirty = second.dirty.expect("only the face changed");
+        assert_ne!(before, second.rgba, "breathing changed something");
+        assert_changes_inside(&before, second.rgba, 168, dirty);
+    }
+
+    #[test]
+    fn listening_eyes_and_speaking_collar_stay_inside_the_face_region() {
+        for state in [VisualState::Listening, VisualState::Speaking] {
+            let mut renderer = HeadRenderer::new(224, 168).unwrap();
+            let quiet = Scene::new(state, Duration::ZERO);
+            let before = renderer.render(&quiet).rgba.to_vec();
+            let loud = renderer.render(&Scene {
+                level: 1.0,
+                ..quiet
+            });
+            let dirty = loud.dirty.expect("only the face changed");
+            assert_changes_inside(&before, loud.rgba, 224, dirty);
+        }
+    }
+
+    #[test]
+    fn state_change_and_bracket_chase_redraw_everything() {
+        let mut r = HeadRenderer::new(168, 126).unwrap();
+        r.render(&Scene::new(VisualState::Idle, Duration::ZERO));
+        assert!(
+            r.render(&Scene::new(VisualState::Thinking, Duration::ZERO))
+                .dirty
+                .is_none()
+        );
+        // The chase moves to the next bracket after 150 ms.
+        assert!(
+            r.render(&Scene::new(VisualState::Thinking, MS(200)))
+                .dirty
+                .is_none()
+        );
     }
 
     #[test]

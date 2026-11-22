@@ -40,11 +40,11 @@ pub fn on_first_frame() {
     }
 }
 
-/// Reports per-frame present cost for one reveal/retract cycle.
-pub fn on_slide_frames(count: usize, p95: Duration, max: Duration) {
-    emit("slide_frames", count);
-    emit("slide_frame_p95_ms", format_args!("{:.3}", millis(p95)));
-    emit("slide_frame_max_ms", format_args!("{:.3}", millis(max)));
+/// Reports per-frame render + present cost for one reveal-to-park cycle.
+pub fn on_head_frames(count: usize, p95: Duration, max: Duration) {
+    emit("head_frames", count);
+    emit("head_frame_p95_ms", format_args!("{:.3}", millis(p95)));
+    emit("head_frame_max_ms", format_args!("{:.3}", millis(max)));
 }
 
 /// Reports the armed milestone and starts the idle sample.

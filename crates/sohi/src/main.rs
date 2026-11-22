@@ -31,6 +31,8 @@ struct Args {
     test_panic: bool,
     /// Show the neutral test card in the head window (plumbing check).
     dev_test_card: bool,
+    /// Reveal the head and cycle through every visual state.
+    dev_states: bool,
     /// `--perf[=<idle seconds>]`: print `perf:` lines, then exit after the
     /// idle sample.
     perf: Option<Duration>,
@@ -44,6 +46,7 @@ impl Args {
             match arg.as_str() {
                 "--test-panic" => parsed.test_panic = true,
                 "--dev-test-card" => parsed.dev_test_card = true,
+                "--dev-states" => parsed.dev_states = true,
                 "--perf" => parsed.perf = Some(perf::DEFAULT_IDLE),
                 _ => match arg.strip_prefix("--perf=").map(str::parse) {
                     Some(Ok(secs)) => parsed.perf = Some(Duration::from_secs(secs)),
@@ -102,6 +105,8 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {
         app.show_test_card()?;
+    } else if args.dev_states {
+        app.start_dev_cycle();
     } else if config.ui.launch_peek {
         app.peek(sohi_core::motion::LAUNCH_PEEK_HOLD);
     }

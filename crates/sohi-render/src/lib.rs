@@ -8,7 +8,7 @@
 
 mod head;
 
-pub use head::{HeadRenderer, Scene};
+pub use head::{HeadRenderer, Rendered, Scene};
 
 /// A neutral, deliberately non-final frame for plumbing tests.
 ///
