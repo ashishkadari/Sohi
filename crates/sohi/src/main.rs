@@ -5,8 +5,10 @@
 
 mod config_file;
 mod logger;
+mod perf;
 
 use std::process::ExitCode;
+use std::time::Duration;
 
 use sohi_win::{AppWindow, SingleInstance, WinEvent};
 
@@ -22,6 +24,9 @@ const WAKE_MESSAGE: &str = "Sohi.Wake";
 struct Args {
     /// Panic right after startup to exercise the panic hook (P0 acceptance).
     test_panic: bool,
+    /// `--perf[=<idle seconds>]`: print `perf:` lines, then exit after the
+    /// idle sample.
+    perf: Option<Duration>,
 }
 
 impl Args {
@@ -31,7 +36,11 @@ impl Args {
         for arg in args {
             match arg.as_str() {
                 "--test-panic" => parsed.test_panic = true,
-                _ => unknown.push(arg),
+                "--perf" => parsed.perf = Some(perf::DEFAULT_IDLE),
+                _ => match arg.strip_prefix("--perf=").map(str::parse) {
+                    Some(Ok(secs)) => parsed.perf = Some(Duration::from_secs(secs)),
+                    _ => unknown.push(arg),
+                },
             }
         }
         (parsed, unknown)
@@ -71,9 +80,15 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     }
     assert!(!args.test_panic, "--test-panic requested");
 
-    let _window = AppWindow::create(APP_WINDOW_CLASS, wake_message, |event| match event {
+    let window = AppWindow::create(APP_WINDOW_CLASS, wake_message, |event| match event {
         WinEvent::WakeRequested => log::info!("wake requested"),
     })?;
+
+    // Armed: every startup step is done (spec §5.8 step 4).
+    let _armed_event = match args.perf {
+        Some(idle) => Some(perf::on_armed(window.remote(), idle)?),
+        None => None,
+    };
     let code = sohi_win::run_message_loop();
     log::info!("exiting with code {code}");
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))

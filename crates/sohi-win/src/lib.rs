@@ -7,6 +7,7 @@
 mod error;
 mod handle;
 mod instance;
+pub mod perf;
 mod window;
 
 pub use error::WinError;

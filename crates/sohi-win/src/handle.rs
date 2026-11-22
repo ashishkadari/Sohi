@@ -14,6 +14,11 @@ impl OwnedHandle {
     pub(crate) unsafe fn from_raw(handle: HANDLE) -> Self {
         Self(handle)
     }
+
+    /// Returns the raw handle without giving up ownership.
+    pub(crate) fn raw(&self) -> HANDLE {
+        self.0
+    }
 }
 
 impl Drop for OwnedHandle {
