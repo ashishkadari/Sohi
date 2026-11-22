@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use sohi_core::config::{ReducedMotion, WakeConfig};
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::motion::LAUNCH_PEEK_HOLD;
-use sohi_core::visibility::{Input, Phase};
+use sohi_core::visibility::{Input, Phase, RetractRule};
 use sohi_core::wake::CornerSettings;
 use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{AppWindow, EventQueue, FrameTimer, RemoteWindow, TrayIcon, WinError, WinEvent};
@@ -16,10 +16,6 @@ use crate::corner::Corner;
 use crate::head::Head;
 use crate::hotkeys::{self, Hotkeys};
 use crate::tray_menu::{self, MenuCommand, MenuState};
-
-/// How long a wake keeps the head up with nothing happening. Replaced by
-/// the auto-retract rules (spec §4.4).
-const WAKE_HOLD: Duration = Duration::from_millis(8500);
 
 /// Files the menu can open.
 pub struct Paths {
@@ -141,6 +137,12 @@ impl App {
         });
     }
 
+    /// Reveals the head for a wake. Until voice exists (P3) nothing is
+    /// said, so the no-speech rule retracts it (spec §4.4).
+    fn wake(&mut self) {
+        self.head.input(RetractRule::NoSpeech.reveal());
+    }
+
     fn on_cursor_poll(&mut self) {
         let (head, cooldown) = (&self.head, self.cooldown);
         if self
@@ -148,7 +150,7 @@ impl App {
             .on_poll(self.monitor, |now: Instant| head.corner_gate(now, cooldown))
         {
             log::info!("wake: corner");
-            self.peek(WAKE_HOLD);
+            self.wake();
         }
     }
 
@@ -164,11 +166,11 @@ impl App {
             }
             hotkeys::VOICE => {
                 log::info!("wake: hotkey (voice)");
-                self.peek(WAKE_HOLD);
+                self.wake();
             }
             hotkeys::TEXT => {
                 log::info!("wake: hotkey (text; text mode is not available yet)");
-                self.peek(WAKE_HOLD);
+                self.wake();
             }
             other => log::warn!("unknown hotkey id {other}"),
         }

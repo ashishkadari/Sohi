@@ -14,6 +14,66 @@ use std::time::{Duration, Instant};
 
 /// How long auto-retract waits after the pointer leaves the head (§4.4).
 pub const HOVER_RESUME: Duration = Duration::from_secs(1);
+/// With no speech, the mic closes after this long (§4.4)…
+pub const NO_SPEECH_TIMEOUT: Duration = Duration::from_secs(8);
+/// …and the head retracts this much later.
+pub const NO_SPEECH_GRACE: Duration = Duration::from_millis(500);
+/// How long the head lingers after a reply finishes.
+pub const REPLY_LINGER: Duration = Duration::from_millis(2500);
+/// How long a text reply stays up once the pill loses focus.
+pub const TEXT_REPLY_UNFOCUSED: Duration = Duration::from_secs(10);
+/// How long the head stays up after an error.
+pub const ERROR_LINGER: Duration = Duration::from_secs(3);
+
+/// The auto-retract rules (spec §4.4). Hover pausing is handled by
+/// [`Input::Hover`] on top of whichever rule is in force.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetractRule {
+    /// Revealed, with no speech and no input yet.
+    NoSpeech,
+    /// Playback and the model are done.
+    ReplyDone,
+    /// Text mode has focus or non-empty input: never (Esc closes).
+    TextFocused,
+    /// A text reply is shown and the pill is not focused.
+    TextReplyUnfocused,
+    /// Something failed. With the pill open the error stays until the
+    /// user acts.
+    Error {
+        /// Whether the text pill is open.
+        pill_open: bool,
+    },
+}
+
+impl RetractRule {
+    /// How long until the head retracts under this rule, or `None` for
+    /// never.
+    #[must_use]
+    pub fn delay(self) -> Option<Duration> {
+        match self {
+            Self::NoSpeech => Some(NO_SPEECH_TIMEOUT + NO_SPEECH_GRACE),
+            Self::ReplyDone => Some(REPLY_LINGER),
+            Self::TextReplyUnfocused => Some(TEXT_REPLY_UNFOCUSED),
+            Self::Error { pill_open: false } => Some(ERROR_LINGER),
+            Self::TextFocused | Self::Error { pill_open: true } => None,
+        }
+    }
+
+    /// The input that puts this rule in force on a revealed head.
+    #[must_use]
+    pub fn input(self) -> Input {
+        self.delay()
+            .map_or(Input::KeepShown, Input::ScheduleRetract)
+    }
+
+    /// The input that reveals the head under this rule.
+    #[must_use]
+    pub fn reveal(self) -> Input {
+        Input::Reveal {
+            retract_after: self.delay(),
+        }
+    }
+}
 
 /// Where the head is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +274,9 @@ impl Visibility {
             Input::SlideDone => {
                 self.phase = Phase::Parked;
                 self.parked_at = Some(now);
+                // A hidden window cannot be hovered; the window layer
+                // reports a fresh hover if the pointer is still there.
+                self.hovered = false;
                 Some(Effect::Hide)
             }
             Input::Retract
@@ -423,6 +486,58 @@ mod tests {
         v.step(t0, REVEAL_FOREVER);
         v.step(t0, Input::SlideDone);
         assert_eq!(v.next_deadline(), None);
+    }
+
+    #[test]
+    fn parking_forgets_a_hover_that_never_left() {
+        let t0 = Instant::now();
+        let mut v = at(Phase::Shown, t0);
+        v.step(t0, Input::Hover(true));
+        v.step(t0, Input::Retract);
+        v.step(t0 + MS(200), Input::SlideDone);
+        // No Hover(false) arrived, but the next reveal must still retract.
+        v.step(t0 + MS(5000), REVEAL_8S);
+        v.step(t0 + MS(5260), Input::SlideDone);
+        assert_eq!(v.next_deadline(), Some(t0 + MS(13_260)));
+    }
+
+    #[test]
+    fn retract_rules_match_the_spec_table() {
+        assert_eq!(RetractRule::NoSpeech.delay(), Some(MS(8500)));
+        assert_eq!(RetractRule::ReplyDone.delay(), Some(MS(2500)));
+        assert_eq!(RetractRule::TextFocused.delay(), None);
+        assert_eq!(RetractRule::TextReplyUnfocused.delay(), Some(MS(10_000)));
+        assert_eq!(
+            RetractRule::Error { pill_open: false }.delay(),
+            Some(MS(3000))
+        );
+        assert_eq!(RetractRule::Error { pill_open: true }.delay(), None);
+        assert_eq!(RetractRule::TextFocused.input(), Input::KeepShown);
+        assert_eq!(
+            RetractRule::ReplyDone.input(),
+            Input::ScheduleRetract(MS(2500))
+        );
+    }
+
+    #[test]
+    fn rules_replace_each_other_while_shown() {
+        let t0 = Instant::now();
+        let mut v = Visibility::new();
+        v.step(t0, RetractRule::NoSpeech.reveal());
+        v.step(t0 + MS(260), Input::SlideDone);
+        assert_eq!(v.next_deadline(), Some(t0 + MS(8760)));
+        // Typing pins it; losing focus with a reply up starts 10 s.
+        v.step(t0 + MS(1000), RetractRule::TextFocused.input());
+        assert_eq!(v.next_deadline(), None);
+        assert_eq!(v.step(t0 + MS(60_000), Input::Tick), None);
+        v.step(t0 + MS(60_000), RetractRule::TextReplyUnfocused.input());
+        assert_eq!(v.next_deadline(), Some(t0 + MS(70_000)));
+        // An error shortens it to 3 s.
+        v.step(
+            t0 + MS(61_000),
+            RetractRule::Error { pill_open: false }.input(),
+        );
+        assert_eq!(v.step(t0 + MS(64_000), Input::Tick), Some(Effect::SlideOut));
     }
 
     #[test]

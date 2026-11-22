@@ -6,6 +6,7 @@
 //! While parked the window is hidden, so the compositor does no work for it.
 
 use std::cell::Cell;
+use std::rc::Rc;
 
 use sohi_core::geometry::RectPx;
 use windows::Win32::Foundation::{
@@ -67,6 +68,8 @@ pub struct HeadWindow {
     /// The last presented frame's placement. An unchanged placement
     /// allows a dirty-rectangle update.
     last: Option<Presented>,
+    /// Shared with the handler: whether a mouse-leave is being tracked.
+    tracking: Rc<Cell<bool>>,
 }
 
 impl HeadWindow {
@@ -80,9 +83,10 @@ impl HeadWindow {
             ex_style: WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             style: WS_POPUP,
         };
+        let tracking = Rc::new(Cell::new(false));
         let handler = HeadHandler {
             queue,
-            tracking: Cell::new(false),
+            tracking: Rc::clone(&tracking),
         };
         let hwnd = create_window(&spec, Box::new(handler))?;
         let excluded = TRUE;
@@ -100,6 +104,7 @@ impl HeadWindow {
             hwnd,
             surface: None,
             last: None,
+            tracking,
         })
     }
 
@@ -176,10 +181,13 @@ impl HeadWindow {
         }
     }
 
-    /// Hides the window (parked).
+    /// Hides the window (parked). Hover tracking starts over: if the
+    /// pointer is still there when the head comes back, the next mouse
+    /// move reports [`WinEvent::HeadHover`] again.
     pub fn hide(&self) {
         // SAFETY: valid window owned by this thread.
         let _ = unsafe { ShowWindow(self.hwnd.raw(), SW_HIDE) };
+        self.tracking.set(false);
     }
 
     /// Whether the window is currently shown.
@@ -276,7 +284,7 @@ fn clip(r: RectPx, width: u32, height: u32) -> RectPx {
 struct HeadHandler {
     queue: EventQueue,
     /// Whether `TrackMouseEvent(TME_LEAVE)` is armed (pointer is over us).
-    tracking: Cell<bool>,
+    tracking: Rc<Cell<bool>>,
 }
 
 impl HeadHandler {
