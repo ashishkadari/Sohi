@@ -28,7 +28,8 @@ impl Corner {
     /// Handles a poll tick: samples the cursor against `monitor`
     /// (`rcMonitor` of the primary display) and retimes the next poll.
     /// Returns `true` if the pointer dwelt in the hot zone with no button
-    /// held and `gate` allows a wake now.
+    /// held, `gate` allows a wake now, and no full-screen app or
+    /// presentation is running.
     pub fn on_poll(&mut self, monitor: RectPx, gate: impl FnOnce(Instant) -> Gate) -> bool {
         let now = Instant::now();
         let Some(cursor) = sohi_win::cursor_pos() else {
@@ -51,8 +52,15 @@ impl Corner {
                 false
             }
             Gate::Allow => {
+                // Asked once per dwell; either way this visit is spent.
                 self.dwell.use_up();
-                true
+                match sohi_win::shell::do_not_disturb() {
+                    Some(reason) => {
+                        log::info!("corner wake suppressed: {reason}");
+                        false
+                    }
+                    None => true,
+                }
             }
         }
     }
