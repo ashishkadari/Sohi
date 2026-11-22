@@ -1,7 +1,7 @@
 //! UI-thread application state: owns the windows and reacts to events.
 
 use sohi_core::geometry::{RectPx, head_window_rect};
-use sohi_win::{EventQueue, HeadWindow, WinError, WinEvent};
+use sohi_win::{EventQueue, Frame, HeadWindow, WinError, WinEvent};
 
 /// Everything the UI thread owns.
 pub struct App {
@@ -32,13 +32,31 @@ impl App {
     pub fn handle(&mut self, event: WinEvent) {
         match event {
             WinEvent::WakeRequested => log::info!("wake requested"),
-            WinEvent::HeadClicked => log::debug!("head clicked"),
-            WinEvent::HeadContextMenu { x, y } => log::debug!("head context menu at ({x}, {y})"),
+            WinEvent::HeadClicked => log::info!("head clicked"),
+            WinEvent::HeadContextMenu { x, y } => log::info!("head context menu at ({x}, {y})"),
             WinEvent::HeadHover(over) => {
                 log::debug!("head hover: {over}");
                 self.hovered = over;
             }
         }
+    }
+
+    /// Shows the neutral test card in the head window (`--dev-test-card`).
+    ///
+    /// # Errors
+    /// Returns [`WinError`] if the frame cannot be presented.
+    pub fn show_test_card(&mut self) -> Result<(), WinError> {
+        let (w, h) = (self.head_rect.width(), self.head_rect.height());
+        let pixels = sohi_render::test_card(w, h, 128);
+        let frame = Frame {
+            width: w,
+            height: h,
+            rgba: &pixels,
+        };
+        self.head
+            .present(frame, self.head_rect.left, self.head_rect.top, 255)?;
+        self.head.show();
+        Ok(())
     }
 
     /// Recomputes the head position from the primary monitor's work area.

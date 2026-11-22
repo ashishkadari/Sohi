@@ -25,6 +25,8 @@ const WAKE_MESSAGE: &str = "Sohi.Wake";
 struct Args {
     /// Panic right after startup to exercise the panic hook (P0 acceptance).
     test_panic: bool,
+    /// Show the neutral test card in the head window (plumbing check).
+    dev_test_card: bool,
     /// `--perf[=<idle seconds>]`: print `perf:` lines, then exit after the
     /// idle sample.
     perf: Option<Duration>,
@@ -37,6 +39,7 @@ impl Args {
         for arg in args {
             match arg.as_str() {
                 "--test-panic" => parsed.test_panic = true,
+                "--dev-test-card" => parsed.dev_test_card = true,
                 "--perf" => parsed.perf = Some(perf::DEFAULT_IDLE),
                 _ => match arg.strip_prefix("--perf=").map(str::parse) {
                     Some(Ok(secs)) => parsed.perf = Some(Duration::from_secs(secs)),
@@ -84,6 +87,9 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     let queue = EventQueue::new();
     let window = AppWindow::create(APP_WINDOW_CLASS, wake_message, queue.clone())?;
     let mut app = app::App::new(&queue)?;
+    if args.dev_test_card {
+        app.show_test_card()?;
+    }
 
     // Armed: every startup step is done (spec §5.8 step 4).
     let _armed_event = match args.perf {

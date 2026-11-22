@@ -1,3 +1,90 @@
 //! Pure renderer: turns a visual state and time into a premultiplied pixmap.
+//!
+//! The real head, frame and visor drawing (spec §4.5) lands with the visual
+//! design. Until then this crate only provides a neutral [`test_card`] for
+//! exercising the window, blit and timing plumbing.
 
 #![forbid(unsafe_code)]
+
+/// A neutral, deliberately non-final frame for plumbing tests.
+///
+/// RGBA, premultiplied, `width * height * 4` bytes. It has a fully
+/// transparent outer margin (to test click-through), a translucent grey
+/// panel, and a 2 px light outline. `level` (0–255) scales the panel's
+/// brightness so animation can be checked by eye.
+#[must_use]
+pub fn test_card(width: u32, height: u32, level: u8) -> Vec<u8> {
+    let (w, h) = (width as usize, height as usize);
+    let mut out = vec![0u8; w * h * 4];
+    let margin_x = w / 6;
+    let margin_y = h / 6;
+    let outline = 2;
+    for y in 0..h {
+        for x in 0..w {
+            let inside = x >= margin_x && x < w - margin_x && y >= margin_y && y < h - margin_y;
+            if !inside {
+                continue;
+            }
+            let edge = x < margin_x + outline
+                || x >= w - margin_x - outline
+                || y < margin_y + outline
+                || y >= h - margin_y - outline;
+            let (grey, alpha) = if edge {
+                (200u16, 255u16)
+            } else {
+                (40 + u16::from(level) * 80 / 255, 200)
+            };
+            let premul = u8::try_from(grey * alpha / 255).unwrap_or(u8::MAX);
+            let i = (y * w + x) * 4;
+            out[i..i + 4].copy_from_slice(&[
+                premul,
+                premul,
+                premul,
+                u8::try_from(alpha).unwrap_or(255),
+            ]);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pixel(buf: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * w + x) * 4) as usize;
+        [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
+    }
+
+    #[test]
+    fn size_and_transparent_margin() {
+        let buf = test_card(168, 126, 0);
+        assert_eq!(buf.len(), 168 * 126 * 4);
+        assert_eq!(pixel(&buf, 168, 0, 0), [0, 0, 0, 0]);
+        assert_eq!(pixel(&buf, 168, 167, 125), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn centre_is_translucent_and_outline_opaque() {
+        let buf = test_card(168, 126, 255);
+        assert_eq!(pixel(&buf, 168, 84, 63)[3], 200);
+        assert_eq!(pixel(&buf, 168, 28, 63)[3], 255);
+    }
+
+    #[test]
+    fn colour_never_exceeds_alpha_premultiplied() {
+        for level in [0, 128, 255] {
+            let buf = test_card(112, 84, level);
+            for px in buf.as_chunks::<4>().0 {
+                assert!(px[0] <= px[3] && px[1] <= px[3] && px[2] <= px[3]);
+            }
+        }
+    }
+
+    #[test]
+    fn level_changes_brightness() {
+        let dark = test_card(112, 84, 0);
+        let bright = test_card(112, 84, 255);
+        assert!(pixel(&bright, 112, 56, 42)[0] > pixel(&dark, 112, 56, 42)[0]);
+    }
+}
