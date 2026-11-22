@@ -5,6 +5,7 @@
 pub mod chat;
 pub mod config;
 pub mod geometry;
+pub mod history;
 pub mod hotkey;
 pub mod interaction;
 pub mod motion;

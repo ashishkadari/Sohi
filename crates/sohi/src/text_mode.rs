@@ -7,8 +7,8 @@
 
 use std::time::{Duration, Instant};
 
-use sohi_core::chat::Message;
 use sohi_core::geometry::{BASE_DPI, RectPx};
+use sohi_core::history::History;
 use sohi_core::interaction::{ERROR_HOLD, Effect, Event, Interaction, State};
 use sohi_core::persona::text_system_prompt;
 use sohi_core::pill::pill_origin;
@@ -27,8 +27,6 @@ pub const TIMER_ERROR_HOLD: usize = 2;
 
 /// How long a hidden pill is kept before it is destroyed.
 const PILL_IDLE: Duration = Duration::from_mins(5);
-/// Messages kept for context until the history ring buffer lands.
-const HISTORY_LIMIT: usize = 24;
 
 /// Settings text mode needs.
 pub struct TextSettings {
@@ -45,7 +43,7 @@ pub struct TextMode {
     interaction: Interaction,
     pill: Option<PillWindow>,
     runtime: Option<Runtime<Request, Update>>,
-    history: Vec<Message>,
+    history: History,
     last_prompt: Option<String>,
     queue: EventQueue,
     window: RemoteWindow,
@@ -69,7 +67,7 @@ impl TextMode {
             interaction: Interaction::new(),
             pill: None,
             runtime: None,
-            history: Vec::new(),
+            history: History::new(),
             last_prompt: None,
             queue,
             window,
@@ -130,18 +128,29 @@ impl TextMode {
             let event = match update {
                 Update::Delta { turn, text } => Event::LlmDelta { turn, text },
                 Update::Done { turn, reply } => {
-                    if self.interaction.state() == (State::Thinking { turn }) {
-                        self.remember(Message::assistant(reply));
+                    if self.is_current(turn) {
+                        self.history.push_reply(reply);
                     }
                     Event::LlmDone { turn }
                 }
-                Update::Failed { turn, error } => Event::TurnFailed {
-                    turn,
-                    message: user_message(&error),
-                },
+                Update::Failed { turn, error } => {
+                    if self.is_current(turn) {
+                        self.history.drop_pending();
+                    }
+                    Event::TurnFailed {
+                        turn,
+                        message: user_message(&error),
+                    }
+                }
             };
             self.event(event, head);
         }
+    }
+
+    /// Whether `turn` is the one still waited for (older turns' updates
+    /// are stale).
+    fn is_current(&self, turn: u64) -> bool {
+        self.interaction.state() == (State::Thinking { turn })
     }
 
     /// Handles an app-window timer. Returns `false` if it is not ours.
@@ -252,26 +261,28 @@ impl TextMode {
 
     /// Hands the turn to the runtime thread, or returns its failure.
     fn start_turn(&mut self, turn: u64, text: String) -> Option<Event> {
-        self.remember(Message::user(text));
+        self.history.push_user(text);
         let request = Request::Chat(ChatTurn {
             turn,
             model: self.settings.model.clone(),
             fallback_model: self.settings.fallback_model.clone(),
             system: text_system_prompt(&self.settings.user_name, &sohi_win::local_time()),
-            messages: self.history.clone(),
+            messages: self.history.messages(),
         });
         let sent = self.runtime().map(|r| r.send(request));
         if matches!(sent, Some(Ok(()))) {
             return None;
         }
         log::error!("cannot start turn {turn}: {sent:?}");
+        self.history.drop_pending();
         Some(Event::TurnFailed {
             turn,
             message: "Sohi could not start that request. Try again.".to_owned(),
         })
     }
 
-    fn cancel_turn(&self, turn: u64) {
+    fn cancel_turn(&mut self, turn: u64) {
+        self.history.drop_pending();
         let Some(runtime) = &self.runtime else {
             return;
         };
@@ -294,12 +305,6 @@ impl TextMode {
             }
         }
         self.runtime.as_ref()
-    }
-
-    fn remember(&mut self, message: Message) {
-        self.history.push(message);
-        let excess = self.history.len().saturating_sub(HISTORY_LIMIT);
-        self.history.drain(..excess);
     }
 }
 
