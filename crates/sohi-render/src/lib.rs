@@ -48,7 +48,7 @@ pub fn test_card(width: u32, height: u32, level: u8) -> Vec<u8> {
 }
 
 /// Sohi's red accent (`RED_ACTIVE`, spec §4.5).
-const RED: [u8; 3] = [0xE3, 0x19, 0x2B];
+const RED: [u8; 3] = [0xB0, 0x12, 0x2A];
 
 /// The tray icon (spec §4.8): an opaque red square on a clear background,
 /// `size` x `size` RGBA, inset by an eighth of the size on each side.
@@ -83,7 +83,7 @@ mod tests {
             assert_eq!(pixel(&buf, size, 0, 0), [0, 0, 0, 0]);
             assert_eq!(
                 pixel(&buf, size, size / 2, size / 2),
-                [0xE3, 0x19, 0x2B, 255]
+                [0xB0, 0x12, 0x2A, 255]
             );
         }
     }
