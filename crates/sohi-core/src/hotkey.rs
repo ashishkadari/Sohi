@@ -175,8 +175,8 @@ mod tests {
 
     #[test]
     fn spec_defaults_parse() {
-        let voice = Hotkey::parse("Ctrl+Alt+Space").unwrap();
-        assert!(voice.ctrl && voice.alt && !voice.shift && !voice.win);
+        let voice = Hotkey::parse("Ctrl+Shift+Space").unwrap();
+        assert!(voice.ctrl && !voice.alt && voice.shift && !voice.win);
         assert_eq!(voice.vk, 0x20);
         assert_eq!(Hotkey::parse("Ctrl+Alt+T").unwrap().vk, u32::from(b'T'));
     }

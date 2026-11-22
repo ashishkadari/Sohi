@@ -6,7 +6,7 @@
 
 [wake]
 # Toggle voice / open text mode.
-hotkey_voice = "Ctrl+Alt+Space"
+hotkey_voice = "Ctrl+Shift+Space"
 hotkey_text = "Ctrl+Alt+T"
 # Park the pointer in the top-right corner of the primary display to wake.
 corner_size_px = 8      # hot zone size, physical pixels

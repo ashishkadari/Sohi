@@ -73,7 +73,7 @@ pub struct WakeConfig {
 impl Default for WakeConfig {
     fn default() -> Self {
         Self {
-            hotkey_voice: "Ctrl+Alt+Space".to_owned(),
+            hotkey_voice: "Ctrl+Shift+Space".to_owned(),
             hotkey_text: "Ctrl+Alt+T".to_owned(),
             corner_size_px: 8,
             dwell_ms: 350,

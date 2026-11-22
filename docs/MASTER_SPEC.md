@@ -33,7 +33,10 @@ visor's role (listening, brightness) and the collar line follows the speech enve
 
 ### 1.2 Wake triggers
 1. **Raise to wake:** the user deliberately parks the mouse pointer in the top-right corner hot zone for a short dwell time.
-2. **Global hotkey:** `Ctrl+Alt+Space` toggles voice. `Ctrl+Alt+T` opens text mode. Both can be changed in config.
+2. **Global hotkey:** `Ctrl+Shift+Space` toggles voice. `Ctrl+Alt+T` opens text mode. Both can be changed in config.
+
+> SPEC CHANGE (2026-11-22): the voice hotkey default moved from `Ctrl+Alt+Space` to `Ctrl+Shift+Space`. Another app
+> on the user's machine already holds `Ctrl+Alt+Space`.
 
 ### 1.3 Core objectives (priority order)
 1. **Anti-bloat:** about 0% idle CPU, ≤ 20 MB idle private memory, under 200 ms cold start, ≤ 8 MB binary.
@@ -312,7 +315,8 @@ In HOT ZONE (8×8 physical px at the corner):
 Polling is SUSPENDED when: session locked (WTSRegisterSessionNotification), display off
 (RegisterPowerSettingNotification GUID_CONSOLE_DISPLAY_STATE), or system suspending.
 ~~~
-Hotkeys: `RegisterHotKey(MOD_CONTROL|MOD_ALT|MOD_NOREPEAT, VK_SPACE)` and the same with `'T'`. If registration
+Hotkeys: `RegisterHotKey(MOD_CONTROL|MOD_SHIFT|MOD_NOREPEAT, VK_SPACE)` and `MOD_CONTROL|MOD_ALT|MOD_NOREPEAT`
+with `'T'`. If registration
 fails (key combination in use), show a tray balloon and log it. Sohi keeps running with corner wake only.
 
 ### 4.8 Tray icon
@@ -453,7 +457,7 @@ never as instructions, and the system prompt says so.
 `%APPDATA%\Sohi\config.toml`. On first run, write it with defaults and comments. The config is re-read when the user picks
 "Open config" and the file's mtime has changed (no file watcher).
 ~~~toml
-[wake]      hotkey_voice = "Ctrl+Alt+Space"   hotkey_text = "Ctrl+Alt+T"
+[wake]      hotkey_voice = "Ctrl+Shift+Space"   hotkey_text = "Ctrl+Alt+T"
             corner_size_px = 8   dwell_ms = 350   cooldown_ms = 1500
 [ui]        launch_peek = true   reduced_motion = "system"
 [llm]       provider = "mistral"   model = "mistral-small-latest"
