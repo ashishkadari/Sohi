@@ -65,7 +65,12 @@ plugin/MCP runtime · installer or auto-update · telemetry · draggable widget.
 | Head rendering | **`tiny-skia`** (CPU, `simd`) → premultiplied BGRA DIB → `UpdateLayeredWindow` | The surface is about 210×160 px at 150 % scaling, so CPU rasterization takes under 0.5 ms. No GPU device, swapchain or shader compiler, and no GPU memory while idle. |
 | Text pill UI | **Native Win32 `EDIT` controls** in a separate popup window, DWM rounded corners | Gives IME, caret, selection, clipboard, accessibility and Unicode for free. A hand-written text editor would be thousands of lines and a source of bugs. |
 | Audio I/O | **WASAPI directly via `windows`** (event-driven shared mode, `AUTOCONVERTPCM`) | The OS resamples to 16 kHz mono i16 for capture at no cost to us, so we need neither `cpal` nor a resampler crate. |
-| VAD | **WebRTC VAD** (`webrtc-vad`/libfvad binding, compiled with `cc`) **[VERIFY crate maintenance]** | About 50 KB, deterministic, no ML runtime, runs on 30 ms frames. |
+| VAD | **earshot** 1.2 (pure-Rust neural VAD, `default-features = false, features = ["std"]`) | About 95 KB, deterministic, no ML runtime or C build, runs on 16 ms frames. |
+
+> SPEC CHANGE (2026-11-22): the VAD is `earshot`, not WebRTC VAD. The `webrtc-vad` crate has had no release since
+> 2019 and needs a C toolchain; earshot is pure Rust, maintained, and more accurate on noisy speech. It costs about
+> 95 KB instead of about 50 KB. Its frames are 16 ms (256 samples), so the segmentation rules in §5.4 are restated
+> in those frames with the same timings.
 | Async runtime | **`tokio`** current-thread runtime, features `rt, net, time, sync, macros, io-util` | Needed for streaming HTTP (SSE/NDJSON), concurrent prewarming and cancellation. It runs on a single dedicated thread that starts lazily on first wake. |
 | HTTP/TLS | **`reqwest`** with `default-features = false`, features `native-tls, json, stream, multipart` | `native-tls` on Windows uses **SChannel**, so no crypto library is bundled. That is about 1.5–2 MB smaller than rustls with ring. |
 | Serialization | `serde`, `serde_json`, `toml` | Config and API payloads. |
@@ -153,7 +158,7 @@ cursor-poll timer (4 Hz) and messages. The runtime thread, once started, stays b
  Wake (corner dwell | hotkey)
    │
    ├─► UI: reveal animation ─────────────────────────────────────────────┐
-   ├─► Capture: open WASAPI 16k mono i16 ──► VAD (30 ms frames)           │
+   ├─► Capture: open WASAPI 16k mono i16 ──► VAD (16 ms frames)           │
    └─► Runtime: prewarm TLS (GET /v1/models, cached 60 s)                 │
                                                                           │
  VAD end-of-speech (700 ms hangover)                                      │
@@ -394,11 +399,20 @@ The `State` struct has three independent regions:
   The capture thread is registered with MMCSS "Pro Audio". The mic opens **only after wake**, and the Windows mic
   privacy indicator is shown only while Listening.
 - The capture thread pushes 10 ms blocks into `rtrb`. **No allocation, no locks, no logging** inside the capture loop.
-- The processing side (runtime thread) assembles **30 ms frames (480 samples)** → WebRTC VAD mode 2:
-  - **Start of speech:** ≥ 3 of the last 5 frames voiced. Prepend a **300 ms pre-roll** ring.
-  - **End of speech:** 700 ms (≈ 23 frames) unvoiced after speech started.
+- The processing side (runtime thread) assembles **16 ms frames (256 samples)** → earshot (voiced at score ≥ 0.5):
+  - **Start of speech:** ≥ 6 of the last 10 frames voiced. Speech starts at the first voiced frame of that window,
+    moved back over directly preceding frames (at most 256 ms) that score ≥ 0.35 or are at least twice as loud as
+    the quietest frame so far: soft onsets such as /s/ and /h/ are not voiced. Prepend a **300 ms pre-roll** ring.
+  - **End of speech:** 700 ms (44 frames) unvoiced after speech started. Keep 160 ms of tail.
+  - **Too short:** under 250 ms of voiced frames (a cough, a click) is dropped and listening continues.
   - **Limits:** 8 s with no speech at all → `NoSpeechTimeout`. 30 s maximum utterance.
   - RMS level is sent to the UI at 30 Hz, decimated (not per frame).
+  - Acceptance: on the five fixtures in `crates/sohi-audio/tests/fixtures` (synthesized speech, padded, in quiet,
+    at about 20 dB SNR, and at −16 dB gain) start and end are within ±100 ms of the placed speech.
+
+  > SPEC CHANGE (2026-11-22): rules restated for earshot's 16 ms frames (were 3 of 5 × 30 ms; now 6 of 10 × 16 ms),
+  > plus the soft-onset rule, the 160 ms tail and the explicit 250 ms minimum. Measured: starts 0–48 ms after the
+  > placed speech, ends 10–96 ms after (the detector holds its score for a few frames once sound stops).
 - Encoding: in-memory WAV (RIFF header + PCM16), about 32 KB/s. Opus encoding is a possible later optimization behind a feature flag.
 - On `CloseMic`: stop and release the `IAudioClient` and the thread exits. The mic is fully released.
 
@@ -847,5 +861,6 @@ minimum granularity, not a cap.
    text in `content_block_delta`/`text_delta`, end at `message_stop`, mid-stream `error` events, `ping`. Current cheap tier:
    `claude-haiku-5-5`. Tool-use events still to verify in P7.)*
 5. Ollama `/api/chat` tool-calling support for the chosen offline model.
-6. Maintenance status of the `webrtc-vad` (or `fvad`) crate and whether it builds under MSVC.
+6. ~~Maintenance status of the `webrtc-vad` (or `fvad`) crate and whether it builds under MSVC.~~ *(Resolved
+   2026-11-22: unmaintained since 2019; replaced by `earshot`, see §2.2.)*
 7. `NotifyNetworkConnectivityHintChange` behaviour on Win11 builds in use.

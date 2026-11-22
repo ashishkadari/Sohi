@@ -3,4 +3,5 @@
 #![forbid(unsafe_code)]
 
 pub mod ring;
+pub mod vad;
 pub mod wav;
