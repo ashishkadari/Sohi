@@ -16,8 +16,17 @@ use crate::runtime::UiLink;
 /// UI → runtime.
 #[derive(Debug)]
 pub enum Request {
-    /// Start a text turn.
+    /// Start a text turn. A turn still running is dropped first: exactly
+    /// one turn runs at a time (spec §9.3).
     Chat(ChatTurn),
+    /// Cancel `turn` if it is the one running. `at` is when the user asked,
+    /// for the latency log.
+    Cancel {
+        /// The turn to cancel.
+        turn: u64,
+        /// When the user asked.
+        at: Instant,
+    },
 }
 
 /// One text turn.
@@ -59,12 +68,98 @@ pub enum Update {
     },
 }
 
+/// Runs one turn to completion, sending its updates. Dropping the future
+/// cancels the turn, including any HTTP request in flight.
+trait TurnRunner {
+    async fn run(&mut self, turn: ChatTurn, ui: &UiLink<Update>);
+}
+
+/// Turns against Mistral; the client is created on the first turn.
+struct MistralRunner {
+    client: Option<Mistral>,
+}
+
+impl TurnRunner for MistralRunner {
+    async fn run(&mut self, turn: ChatTurn, ui: &UiLink<Update>) {
+        run_turn(&mut self.client, turn, ui).await;
+    }
+}
+
 /// Serves requests until the UI drops its handle.
-pub async fn serve(mut requests: Receiver<Request>, ui: UiLink<Update>) {
-    let mut client = None;
-    while let Some(request) = requests.recv().await {
-        match request {
-            Request::Chat(turn) => run_turn(&mut client, turn, &ui).await,
+pub async fn serve(requests: Receiver<Request>, ui: UiLink<Update>) {
+    serve_with(requests, ui, MistralRunner { client: None }).await;
+}
+
+async fn serve_with(
+    mut requests: Receiver<Request>,
+    ui: UiLink<Update>,
+    mut runner: impl TurnRunner,
+) {
+    let mut next = None;
+    loop {
+        let request = match next.take() {
+            Some(request) => request,
+            None => match requests.recv().await {
+                Some(request) => request,
+                None => return,
+            },
+        };
+        // A cancel with nothing running has nothing to do.
+        let Request::Chat(turn) = request else {
+            continue;
+        };
+        match run_cancellable(&mut runner, turn, &mut requests, &ui).await {
+            Outcome::Finished => {}
+            Outcome::Cancelled { turn, at } => log::info!(
+                "turn {turn} cancelled {:.1} ms after the request; its HTTP request was dropped",
+                at.elapsed().as_secs_f64() * 1000.0
+            ),
+            Outcome::Replaced(request) => next = Some(request),
+            Outcome::Closed => return,
+        }
+    }
+}
+
+/// How a running turn ended.
+enum Outcome {
+    Finished,
+    Cancelled {
+        turn: u64,
+        at: Instant,
+    },
+    /// A new turn arrived; this one was dropped.
+    Replaced(Request),
+    /// The UI went away.
+    Closed,
+}
+
+/// Runs `turn` while watching for requests. The turn's future is dropped
+/// before this returns, so a cancelled turn's HTTP request is gone by the
+/// time the caller logs it.
+async fn run_cancellable(
+    runner: &mut impl TurnRunner,
+    turn: ChatTurn,
+    requests: &mut Receiver<Request>,
+    ui: &UiLink<Update>,
+) -> Outcome {
+    let id = turn.turn;
+    let run = runner.run(turn, ui);
+    tokio::pin!(run);
+    loop {
+        tokio::select! {
+            () = &mut run => return Outcome::Finished,
+            request = requests.recv() => match request {
+                Some(Request::Cancel { turn, at }) if turn == id => {
+                    return Outcome::Cancelled { turn, at };
+                }
+                // Cancelling a turn that already ended: keep going.
+                Some(Request::Cancel { .. }) => {}
+                Some(request) => {
+                    log::info!("turn {id} replaced by a newer one");
+                    return Outcome::Replaced(request);
+                }
+                None => return Outcome::Closed,
+            },
         }
     }
 }
@@ -134,4 +229,128 @@ async fn chat(
         reply.chars().count()
     );
     Ok(reply)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use sohi_win::{AppWindow, EventQueue};
+
+    use super::*;
+    use crate::runtime::Runtime;
+
+    /// Sends one delta, then hangs until dropped.
+    struct Hanging {
+        dropped: Arc<AtomicBool>,
+    }
+
+    struct SetOnDrop(Arc<AtomicBool>);
+
+    impl Drop for SetOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl TurnRunner for Hanging {
+        async fn run(&mut self, turn: ChatTurn, ui: &UiLink<Update>) {
+            let _flag = SetOnDrop(Arc::clone(&self.dropped));
+            ui.send(Update::Delta {
+                turn: turn.turn,
+                text: "partial".into(),
+            });
+            std::future::pending::<()>().await;
+        }
+    }
+
+    fn turn(id: u64) -> Request {
+        Request::Chat(ChatTurn {
+            turn: id,
+            model: String::new(),
+            system: String::new(),
+            messages: Vec::new(),
+        })
+    }
+
+    fn cancel(turn: u64) -> Request {
+        Request::Cancel {
+            turn,
+            at: Instant::now(),
+        }
+    }
+
+    fn start(class: &str) -> (AppWindow, Runtime<Request, Update>, Arc<AtomicBool>) {
+        let window = AppWindow::create(class, 0xC130, EventQueue::new()).unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let runner = Hanging {
+            dropped: Arc::clone(&dropped),
+        };
+        let runtime =
+            Runtime::start(window.remote(), move |rx, ui| serve_with(rx, ui, runner)).unwrap();
+        (window, runtime, dropped)
+    }
+
+    fn wait_until(what: &str, mut done: impl FnMut() -> bool) -> Duration {
+        let start = Instant::now();
+        while !done() {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "timed out: {what}"
+            );
+            std::thread::sleep(Duration::from_micros(200));
+        }
+        start.elapsed()
+    }
+
+    fn deltas(runtime: &Runtime<Request, Update>) -> Vec<u64> {
+        runtime
+            .drain()
+            .filter_map(|u| match u {
+                Update::Delta { turn, .. } => Some(turn),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cancel_drops_the_running_turn_within_30_ms() {
+        let (_window, runtime, dropped) = start("Sohi.Test.Cancel1");
+        runtime.send(turn(1)).unwrap();
+        let mut seen = Vec::new();
+        wait_until("first delta", || {
+            seen.extend(deltas(&runtime));
+            !seen.is_empty()
+        });
+        runtime.send(cancel(1)).unwrap();
+        let took = wait_until("turn dropped", || dropped.load(Ordering::SeqCst));
+        assert!(took < Duration::from_millis(30), "took {took:?}");
+    }
+
+    #[test]
+    fn a_stale_cancel_leaves_the_running_turn_alone() {
+        let (_window, runtime, dropped) = start("Sohi.Test.Cancel2");
+        runtime.send(turn(2)).unwrap();
+        runtime.send(cancel(1)).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!dropped.load(Ordering::SeqCst));
+        runtime.send(cancel(2)).unwrap();
+        wait_until("turn dropped", || dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_new_turn_replaces_the_running_one() {
+        let (_window, runtime, dropped) = start("Sohi.Test.Cancel3");
+        runtime.send(turn(1)).unwrap();
+        runtime.send(turn(2)).unwrap();
+        let mut seen = Vec::new();
+        wait_until("both deltas", || {
+            seen.extend(deltas(&runtime));
+            seen.len() >= 2
+        });
+        assert_eq!(seen, [1, 2]);
+        assert!(dropped.load(Ordering::SeqCst), "turn 1 was not dropped");
+    }
 }

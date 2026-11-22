@@ -103,7 +103,10 @@ pub enum Effect {
         text: String,
     },
     /// Cancel the running turn.
-    CancelTurn,
+    CancelTurn {
+        /// Its id.
+        turn: u64,
+    },
     /// Change the head's visual state.
     SetVisual(VisualState),
     /// Flash the head amber twice.
@@ -209,8 +212,8 @@ impl Interaction {
 
     fn close(&mut self, retract: bool) -> Vec<Effect> {
         let mut effects = Vec::new();
-        if matches!(self.state, State::Thinking { .. }) {
-            effects.push(Effect::CancelTurn);
+        if let State::Thinking { turn } = self.state {
+            effects.push(Effect::CancelTurn { turn });
             effects.push(Effect::SetVisual(VisualState::Idle));
         }
         effects.push(Effect::HidePill);
@@ -342,7 +345,7 @@ mod tests {
         assert_eq!(
             m.step(Event::Escape),
             [
-                Effect::CancelTurn,
+                Effect::CancelTurn { turn },
                 Effect::SetVisual(VisualState::Idle),
                 Effect::HidePill,
                 Effect::Retract
@@ -430,7 +433,7 @@ mod tests {
         let mut m = Interaction::new();
         submitted(&mut m, "hi");
         let effects = m.step(Event::HeadGone);
-        assert!(effects.contains(&Effect::CancelTurn));
+        assert!(matches!(effects[0], Effect::CancelTurn { .. }));
         assert!(effects.contains(&Effect::HidePill));
         assert!(!effects.contains(&Effect::Retract));
     }

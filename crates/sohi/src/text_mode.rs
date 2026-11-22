@@ -5,7 +5,7 @@
 //! The pill window and the runtime thread are created on first use. The
 //! pill is destroyed after 5 minutes hidden, to give its memory back.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sohi_core::chat::Message;
 use sohi_core::geometry::{BASE_DPI, RectPx};
@@ -196,7 +196,7 @@ impl TextMode {
             Effect::SetBubble(text) => self.with_pill(|p| p.set_bubble(&text)),
             Effect::AppendBubble(text) => self.with_pill(|p| p.append_bubble(&text)),
             Effect::StartTurn { turn, text } => return self.start_turn(turn, text),
-            Effect::CancelTurn => log::info!("turn cancelled"),
+            Effect::CancelTurn { turn } => self.cancel_turn(turn),
             Effect::SetVisual(visual) => head.set_visual(visual),
             Effect::FlashError => head.flash_error(),
             Effect::StartErrorTimer => {
@@ -266,6 +266,21 @@ impl TextMode {
             turn,
             message: "Sohi could not start that request. Try again.".to_owned(),
         })
+    }
+
+    fn cancel_turn(&self, turn: u64) {
+        let Some(runtime) = &self.runtime else {
+            return;
+        };
+        log::info!("turn {turn}: cancel requested");
+        let request = Request::Cancel {
+            turn,
+            at: Instant::now(),
+        };
+        if let Err(err) = runtime.send(request) {
+            // Its updates are ignored either way: the turn id moved on.
+            log::warn!("cannot cancel turn {turn}: {err:?}");
+        }
     }
 
     fn runtime(&mut self) -> Option<&Runtime<Request, Update>> {
