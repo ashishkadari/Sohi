@@ -109,11 +109,55 @@ impl Slide {
         };
         Some(pose)
     }
+
+    /// How far into this slide the head already is, when it starts from
+    /// `from` (a pose of the opposite slide that was interrupted). The
+    /// shown fraction is the opacity in every mode, so the head reverses
+    /// from exactly where it is instead of jumping.
+    #[must_use]
+    pub fn resume_at(self, from: Pose, reduced_motion: bool) -> Duration {
+        let shown = from.opacity.clamp(0.0, 1.0);
+        let p = match (self, reduced_motion) {
+            (Self::Reveal, true) => shown,
+            (Self::Retract, true) => 1.0 - shown,
+            // shown = 1 - (1 - p)³
+            (Self::Reveal, false) => 1.0 - (1.0 - shown).cbrt(),
+            // shown = 1 - p³
+            (Self::Retract, false) => (1.0 - shown).cbrt(),
+        };
+        self.duration(reduced_motion).mul_f32(p.clamp(0.0, 1.0))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reversal_resumes_from_the_same_pose() {
+        for reduced in [false, true] {
+            for (from, to) in [
+                (Slide::Reveal, Slide::Retract),
+                (Slide::Retract, Slide::Reveal),
+            ] {
+                let total = from.duration(reduced);
+                for k in 1..10 {
+                    let pose = from.pose(total * k / 10, reduced).unwrap();
+                    let resumed = to.pose(to.resume_at(pose, reduced), reduced).unwrap();
+                    assert!(
+                        (resumed.opacity - pose.opacity).abs() < 0.01
+                            && (resumed.offset - pose.offset).abs() < 0.01,
+                        "{from:?}->{to:?} at {k}/10 reduced={reduced}: {pose:?} vs {resumed:?}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            Slide::Reveal.resume_at(Pose::SHOWN, false),
+            REVEAL,
+            "already shown"
+        );
+    }
 
     const MS: fn(u64) -> Duration = Duration::from_millis;
 

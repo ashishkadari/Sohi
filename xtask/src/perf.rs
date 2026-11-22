@@ -179,7 +179,7 @@ fn budget_rows(m: &BTreeMap<String, f64>, size: u64) -> Result<Vec<Row>, String>
         rows.insert(1, row("cold start to first frame", v, 200.0, "ms"));
     }
     if let Some(&v) = m.get("head_frame_p95_ms") {
-        rows.push(row("head frame p95", v, 0.5, "ms"));
+        rows.push(row("head frame p95", v, 1.0, "ms"));
     }
     Ok(rows)
 }

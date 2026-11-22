@@ -5,7 +5,10 @@
 
 mod app;
 mod config_file;
+mod corner;
 mod dev;
+mod head;
+mod hotkeys;
 mod logger;
 mod perf;
 mod tray_menu;
@@ -101,12 +104,13 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     let options = app::Options {
         reduced_motion: config.ui.reduced_motion,
         perf: args.perf.is_some(),
+        wake: config.wake.clone(),
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {
-        app.show_test_card()?;
+        app.head().show_test_card()?;
     } else if args.dev_states {
-        app.start_dev_cycle();
+        app.head().start_dev_cycle();
     } else if config.ui.launch_peek {
         app.peek(sohi_core::motion::LAUNCH_PEEK_HOLD);
     }

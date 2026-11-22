@@ -10,6 +10,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+use crate::Presence;
+
 /// Something the UI thread needs to react to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WinEvent {
@@ -17,6 +19,16 @@ pub enum WinEvent {
     WakeRequested,
     /// The frame timer ticked: time to draw the next animation frame.
     Frame,
+    /// The cursor poll timer ticked: time to sample the cursor (§4.7).
+    CursorPoll,
+    /// The session locked or unlocked, the display turned off or on, or
+    /// the system is suspending or resumed.
+    Presence(Presence),
+    /// A registered global hotkey was pressed.
+    Hotkey {
+        /// The id it was registered under.
+        id: u16,
+    },
     /// Resolution, scaling, work area or primary monitor may have changed;
     /// placement must be recomputed.
     DisplayChanged,

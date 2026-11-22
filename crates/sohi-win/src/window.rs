@@ -10,10 +10,13 @@ use std::ffi::c_void;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     PostMessageW, PostQuitMessage, SPI_SETWORKAREA, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE,
-    WM_DPICHANGED, WM_SETTINGCHANGE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    WM_DPICHANGED, WM_HOTKEY, WM_POWERBROADCAST, WM_SETTINGCHANGE, WM_TIMER, WM_WTSSESSION_CHANGE,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
+use crate::cursor::CURSOR_TIMER_ID;
 use crate::hwnd::{OwnedHwnd, WindowSpec, WndHandler, create_window, signed_words};
+use crate::session::{power_broadcast, session_change};
 use crate::tray::TRAY_CALLBACK;
 use crate::{EventQueue, WinError, WinEvent, register_window_message};
 
@@ -89,6 +92,29 @@ impl AppHandler {
 impl WndHandler for AppHandler {
     fn on_message(&self, _hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
         match msg {
+            WM_TIMER if wparam.0 == CURSOR_TIMER_ID => {
+                self.queue.push(WinEvent::CursorPoll);
+                Some(LRESULT(0))
+            }
+            WM_WTSSESSION_CHANGE => {
+                if let Some(p) = session_change(wparam) {
+                    self.queue.push(WinEvent::Presence(p));
+                }
+                Some(LRESULT(0))
+            }
+            WM_POWERBROADCAST => {
+                if let Some(p) = power_broadcast(wparam, lparam) {
+                    self.queue.push(WinEvent::Presence(p));
+                }
+                // TRUE: grant any request; we never veto suspend.
+                Some(LRESULT(1))
+            }
+            WM_HOTKEY => {
+                if let Ok(id) = u16::try_from(wparam.0) {
+                    self.queue.push(WinEvent::Hotkey { id });
+                }
+                Some(LRESULT(0))
+            }
             TRAY_CALLBACK => {
                 self.on_tray(wparam, lparam);
                 Some(LRESULT(0))
@@ -140,6 +166,7 @@ impl RemoteWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Presence;
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
 
@@ -171,6 +198,11 @@ mod tests {
             (&raw const suggested) as isize,
         );
         send(&window, 0xC123, 0, 0);
+        send(&window, WM_TIMER, CURSOR_TIMER_ID, 0);
+        send(&window, WM_TIMER, 1, 0); // someone else's timer: ignored
+        send(&window, WM_HOTKEY, 7, 0);
+        send(&window, WM_WTSSESSION_CHANGE, 7, 0); // WTS_SESSION_LOCK
+        send(&window, WM_POWERBROADCAST, 18, 0); // PBT_APMRESUMEAUTOMATIC
         let events: Vec<_> = std::iter::from_fn(|| queue.pop()).collect();
         assert_eq!(
             events,
@@ -179,6 +211,10 @@ mod tests {
                 WinEvent::DisplayChanged,
                 WinEvent::DisplayChanged,
                 WinEvent::WakeRequested,
+                WinEvent::CursorPoll,
+                WinEvent::Hotkey { id: 7 },
+                WinEvent::Presence(Presence::Locked(true)),
+                WinEvent::Presence(Presence::Suspended(false)),
             ]
         );
     }

@@ -6,6 +6,7 @@
 //! While parked the window is hidden, so the compositor does no work for it.
 
 use std::cell::Cell;
+use std::rc::Rc;
 
 use sohi_core::geometry::RectPx;
 use windows::Win32::Foundation::{
@@ -64,10 +65,11 @@ pub struct HeadWindow {
     hwnd: OwnedHwnd,
     /// Lazily allocated on the first `present`, resized on DPI change.
     surface: Option<Surface>,
-    /// The last presented frame's placement. Unchanged position and size
-    /// are not passed again (keeps the update off the move/resize path),
-    /// and an unchanged placement allows a dirty-rectangle update.
+    /// The last presented frame's placement. An unchanged placement
+    /// allows a dirty-rectangle update.
     last: Option<Presented>,
+    /// Shared with the handler: whether a mouse-leave is being tracked.
+    tracking: Rc<Cell<bool>>,
 }
 
 impl HeadWindow {
@@ -81,9 +83,10 @@ impl HeadWindow {
             ex_style: WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             style: WS_POPUP,
         };
+        let tracking = Rc::new(Cell::new(false));
         let handler = HeadHandler {
             queue,
-            tracking: Cell::new(false),
+            tracking: Rc::clone(&tracking),
         };
         let hwnd = create_window(&spec, Box::new(handler))?;
         let excluded = TRUE;
@@ -101,6 +104,7 @@ impl HeadWindow {
             hwnd,
             surface: None,
             last: None,
+            tracking,
         })
     }
 
@@ -142,9 +146,6 @@ impl HeadWindow {
             opacity,
             shift,
         };
-        let moved = self
-            .last
-            .is_none_or(|l| l.dst != now.dst || l.size != now.size);
         let dirty = frame
             .dirty
             .filter(|_| self.last == Some(now) && shift == 0)
@@ -158,7 +159,7 @@ impl HeadWindow {
                 shift as usize,
             ),
         }
-        let result = update_layered(self.hwnd.raw(), surface.dc(), &now, moved, dirty);
+        let result = update_layered(self.hwnd.raw(), surface.dc(), &now, dirty);
         self.last = result.is_ok().then_some(now);
         result
     }
@@ -180,10 +181,13 @@ impl HeadWindow {
         }
     }
 
-    /// Hides the window (parked).
+    /// Hides the window (parked). Hover tracking starts over: if the
+    /// pointer is still there when the head comes back, the next mouse
+    /// move reports [`WinEvent::HeadHover`] again.
     pub fn hide(&self) {
         // SAFETY: valid window owned by this thread.
         let _ = unsafe { ShowWindow(self.hwnd.raw(), SW_HIDE) };
+        self.tracking.set(false);
     }
 
     /// Whether the window is currently shown.
@@ -221,7 +225,6 @@ fn update_layered(
     hwnd: HWND,
     src_dc: HDC,
     now: &Presented,
-    moved: bool,
     dirty: Option<RectPx>,
 ) -> Result<(), WinError> {
     let src = POINT { x: 0, y: 0 };
@@ -239,16 +242,12 @@ fn update_layered(
     });
     let info = UPDATELAYEREDWINDOWINFO {
         cbSize: u32::try_from(size_of::<UPDATELAYEREDWINDOWINFO>()).unwrap_or(0),
-        pptDst: if moved {
-            &raw const now.dst
-        } else {
-            std::ptr::null()
-        },
-        psize: if moved {
-            &raw const now.size
-        } else {
-            std::ptr::null()
-        },
+        // Position and size go with every update, even unchanged. Leaving
+        // them out (allowed by the docs) made the compositor keep showing
+        // the first frame's content: a reveal that starts fully transparent
+        // then never became visible.
+        pptDst: &raw const now.dst,
+        psize: &raw const now.size,
         hdcSrc: src_dc,
         pptSrc: &raw const src,
         crKey: COLORREF(0),
@@ -285,7 +284,7 @@ fn clip(r: RectPx, width: u32, height: u32) -> RectPx {
 struct HeadHandler {
     queue: EventQueue,
     /// Whether `TrackMouseEvent(TME_LEAVE)` is armed (pointer is over us).
-    tracking: Cell<bool>,
+    tracking: Rc<Cell<bool>>,
 }
 
 impl HeadHandler {
