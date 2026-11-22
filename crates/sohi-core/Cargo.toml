@@ -1,0 +1,14 @@
+[package]
+name = "sohi-core"
+description = "Pure core logic: state machine, events and effects, config schema, intent parser, sentence chunker."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,35 @@
+# Build output
+/target/
+**/target/
+
+# Secrets — keys live in Windows Credential Manager, never on disk (spec §5.7, §10.4)
+.env
+.env.*
+*.key
+*.pem
+secrets.*
+
+# User config and runtime output
+/config.toml
+*.log
+*.log.*
+logs/
+
+# Perf raw dumps (reports under docs/perf/*.md are committed)
+docs/perf/raw/
+*.etl
+*.dmp
+
+# Large audio — fixtures over 200 KB are not committed (spec §10.4)
+*.wav
+!**/fixtures/**/*.wav
+*.mp3
+*.opus
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store

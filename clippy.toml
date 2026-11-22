@@ -1,0 +1,5 @@
+# Spec §9.1: no unwrap()/expect() outside tests.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+# Spec §9.1: functions <= 60 lines.
+too-many-lines-threshold = 60

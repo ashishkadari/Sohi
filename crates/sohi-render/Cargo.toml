@@ -1,0 +1,11 @@
+[package]
+name = "sohi-render"
+description = "Pure renderer: turns a visual state and time into a premultiplied pixmap."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

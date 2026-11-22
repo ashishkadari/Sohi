@@ -1,0 +1,11 @@
+[package]
+name = "sohi-audio"
+description = "Audio processing: VAD segmentation, pre-roll, WAV encoding and level metering."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
