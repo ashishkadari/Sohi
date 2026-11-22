@@ -7,6 +7,7 @@ pub mod config;
 pub mod geometry;
 pub mod hotkey;
 pub mod motion;
+pub mod pill;
 pub mod secret;
 pub mod visibility;
 pub mod visual;

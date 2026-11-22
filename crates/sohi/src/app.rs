@@ -133,7 +133,11 @@ impl App {
                     log::warn!("cannot re-add tray icon: {err}");
                 }
             }
-            WinEvent::Runtime => log::debug!("runtime updates (nothing reads them yet)"),
+            WinEvent::Runtime
+            | WinEvent::PillSubmit
+            | WinEvent::PillEscape
+            | WinEvent::PillRecall
+            | WinEvent::PillFocus(_) => log::debug!("{event:?} (not wired yet)"),
             WinEvent::HeadHover(over) => {
                 log::debug!("head hover: {over}");
                 self.head.input(Input::Hover(over));
