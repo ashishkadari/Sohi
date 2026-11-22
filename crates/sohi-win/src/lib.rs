@@ -4,6 +4,8 @@
 //! Every `unsafe` block needs a `// SAFETY:` comment, and the crate exposes
 //! safe RAII wrappers to the rest of the workspace.
 
+mod console;
+mod credential;
 mod cursor;
 mod error;
 mod event;
@@ -23,6 +25,8 @@ mod timer;
 mod tray;
 mod window;
 
+pub use console::Prompt;
+pub use credential::{delete_key, read_key, write_key};
 pub use cursor::{CursorPoller, cursor_pos, mouse_button_down};
 pub use error::WinError;
 pub use event::{EventQueue, WinEvent};
