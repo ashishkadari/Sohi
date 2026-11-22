@@ -7,5 +7,6 @@ pub mod geometry;
 pub mod motion;
 pub mod visibility;
 pub mod visual;
+pub mod wake;
 
 pub use config::{Config, ConfigError};

@@ -17,6 +17,8 @@ pub enum WinEvent {
     WakeRequested,
     /// The frame timer ticked: time to draw the next animation frame.
     Frame,
+    /// The cursor poll timer ticked: time to sample the cursor (§4.7).
+    CursorPoll,
     /// Resolution, scaling, work area or primary monitor may have changed;
     /// placement must be recomputed.
     DisplayChanged,

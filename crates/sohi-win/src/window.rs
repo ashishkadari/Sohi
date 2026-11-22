@@ -10,9 +10,10 @@ use std::ffi::c_void;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     PostMessageW, PostQuitMessage, SPI_SETWORKAREA, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE,
-    WM_DPICHANGED, WM_SETTINGCHANGE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    WM_DPICHANGED, WM_SETTINGCHANGE, WM_TIMER, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
+use crate::cursor::CURSOR_TIMER_ID;
 use crate::hwnd::{OwnedHwnd, WindowSpec, WndHandler, create_window, signed_words};
 use crate::tray::TRAY_CALLBACK;
 use crate::{EventQueue, WinError, WinEvent, register_window_message};
@@ -89,6 +90,10 @@ impl AppHandler {
 impl WndHandler for AppHandler {
     fn on_message(&self, _hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
         match msg {
+            WM_TIMER if wparam.0 == CURSOR_TIMER_ID => {
+                self.queue.push(WinEvent::CursorPoll);
+                Some(LRESULT(0))
+            }
             TRAY_CALLBACK => {
                 self.on_tray(wparam, lparam);
                 Some(LRESULT(0))
@@ -171,6 +176,8 @@ mod tests {
             (&raw const suggested) as isize,
         );
         send(&window, 0xC123, 0, 0);
+        send(&window, WM_TIMER, CURSOR_TIMER_ID, 0);
+        send(&window, WM_TIMER, 1, 0); // someone else's timer: ignored
         let events: Vec<_> = std::iter::from_fn(|| queue.pop()).collect();
         assert_eq!(
             events,
@@ -179,6 +186,7 @@ mod tests {
                 WinEvent::DisplayChanged,
                 WinEvent::DisplayChanged,
                 WinEvent::WakeRequested,
+                WinEvent::CursorPoll,
             ]
         );
     }

@@ -5,6 +5,7 @@
 
 mod app;
 mod config_file;
+mod corner;
 mod dev;
 mod logger;
 mod perf;

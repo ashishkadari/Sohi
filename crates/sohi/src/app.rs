@@ -15,6 +15,7 @@ use sohi_win::{
     TrayIcon, WinError, WinEvent,
 };
 
+use crate::corner::Corner;
 use crate::dev::{self, TestCardPulse, percentile};
 use crate::tray_menu::{self, MenuCommand, MenuState};
 
@@ -67,6 +68,10 @@ pub struct App {
     timer: Rc<FrameTimer>,
     /// Current head window rectangle in physical pixels.
     head_rect: RectPx,
+    /// Primary monitor bounds (`rcMonitor`), for the wake hot zone.
+    monitor: RectPx,
+    /// Corner wake polling.
+    corner: Corner,
     /// Whether the pointer is over the head (pauses auto-retract from P2).
     hovered: bool,
     /// Running `--dev-test-card` pulse, if any.
@@ -131,6 +136,8 @@ impl App {
             dpi,
             timer,
             head_rect: RectPx::default(),
+            monitor: RectPx::default(),
+            corner: Corner::start(window),
             hovered: false,
             test_card: None,
             showing_test_card: false,
@@ -158,6 +165,7 @@ impl App {
                 self.peek(LAUNCH_PEEK_HOLD);
             }
             WinEvent::Frame => self.on_frame(),
+            WinEvent::CursorPoll => self.corner.on_poll(self.monitor),
             WinEvent::DisplayChanged => self.on_display_changed(),
             WinEvent::HeadClicked => log::info!("head clicked"),
             WinEvent::HeadContextMenu { x, y } | WinEvent::TrayMenu { x, y } => {
@@ -530,6 +538,7 @@ impl App {
                 log::warn!("cannot resize tray icon: {err}");
             }
         }
+        self.monitor = monitor.monitor;
         let rect = head_window_rect(monitor.work, monitor.dpi);
         if rect != self.head_rect {
             log::info!(
