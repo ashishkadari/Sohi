@@ -575,6 +575,8 @@ Every phase also requires:
 
 ### P3
 - [ ] `Ctrl+Alt+T` opens a focused pill. Typing, IME (test with the Japanese IME), Enter, Esc and ↑ recall all work.
+  > SPEC CHANGE (2026-11-22): the Japanese IME test is dropped; the user does not type with an IME. The pill's EDIT
+  > controls get IME support from Windows, but it is unverified.
 - [ ] A streamed reply appears token by token. First token ≤ 1.0 s p50 for short prompts.
 - [ ] Esc mid-stream cancels within 30 ms and the network request is dropped (verified in the log).
 - [ ] Missing or invalid key → a clear message in the pill with `--set-key` instructions. The key never appears in logs (grep test).
