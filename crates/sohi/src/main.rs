@@ -5,13 +5,16 @@
 
 mod app;
 mod config_file;
+mod dev;
 mod logger;
 mod perf;
 
 use std::process::ExitCode;
 use std::time::Duration;
 
-use sohi_win::{AppWindow, EventQueue, SingleInstance};
+use std::rc::Rc;
+
+use sohi_win::{AppWindow, EventQueue, FrameTimer, SingleInstance};
 
 /// Named mutex that marks the running instance (spec §5.8).
 const INSTANCE_MUTEX: &str = r"Local\Sohi.SingleInstance";
@@ -86,7 +89,8 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
 
     let queue = EventQueue::new();
     let window = AppWindow::create(APP_WINDOW_CLASS, wake_message, queue.clone())?;
-    let mut app = app::App::new(&queue)?;
+    let timer = Rc::new(FrameTimer::new()?);
+    let mut app = app::App::new(&queue, Rc::clone(&timer))?;
     if args.dev_test_card {
         app.show_test_card()?;
     }
@@ -96,7 +100,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         Some(idle) => Some(perf::on_armed(window.remote(), idle)?),
         None => None,
     };
-    let code = sohi_win::run_message_loop(&queue, |event| app.handle(event));
+    let code = sohi_win::run_message_loop(&queue, &timer, |event| app.handle(event));
     log::info!("exiting with code {code}");
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }

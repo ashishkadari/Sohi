@@ -1,8 +1,10 @@
 //! The UI-thread message loop (spec §3.2, §4.5 frame pacing).
 //!
 //! The loop blocks in `MsgWaitForMultipleObjectsEx` with an infinite
-//! timeout, so an idle Sohi costs no CPU. After dispatching window messages
-//! it drains the [`EventQueue`] into the app's handler.
+//! timeout, so an idle Sohi costs no CPU. It also waits on the
+//! [`FrameTimer`], which only signals while an animation runs. After
+//! dispatching window messages it drains the [`EventQueue`] into the app's
+//! handler.
 
 use windows::Win32::Foundation::{HANDLE, WAIT_FAILED};
 use windows::Win32::System::Threading::INFINITE;
@@ -11,12 +13,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PeekMessageW, PostQuitMessage, QS_ALLINPUT, TranslateMessage, WM_QUIT,
 };
 
-use crate::{EventQueue, WinEvent};
+use crate::{EventQueue, FrameTimer, WinEvent};
 
 /// Runs until `WM_QUIT`, calling `on_event` for every queued event.
+/// Each `timer` tick becomes a [`WinEvent::Frame`].
 ///
 /// Returns the exit code passed to [`post_quit`].
-pub fn run_message_loop(queue: &EventQueue, mut on_event: impl FnMut(WinEvent)) -> i32 {
+pub fn run_message_loop(
+    queue: &EventQueue,
+    timer: &FrameTimer,
+    mut on_event: impl FnMut(WinEvent),
+) -> i32 {
     loop {
         if let Some(code) = pump_messages() {
             return code;
@@ -24,7 +31,9 @@ pub fn run_message_loop(queue: &EventQueue, mut on_event: impl FnMut(WinEvent)) 
         while let Some(event) = queue.pop() {
             on_event(event);
         }
-        wait_for_input(&[]);
+        if wait_for_input(&[timer.raw()]) == Some(0) && timer.on_signaled() {
+            queue.push(WinEvent::Frame);
+        }
     }
 }
 

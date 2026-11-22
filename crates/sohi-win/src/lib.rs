@@ -14,6 +14,7 @@ mod monitor;
 mod msgloop;
 pub mod perf;
 mod surface;
+mod timer;
 mod window;
 
 pub use error::WinError;
@@ -23,4 +24,5 @@ pub use head::{Frame, HeadWindow};
 pub use instance::{SingleInstance, forward_to_running_instance, register_window_message};
 pub use monitor::{MonitorInfo, primary_monitor};
 pub use msgloop::{post_quit, run_message_loop};
+pub use timer::{FRAME_30_FPS, FRAME_60_FPS, FrameTimer};
 pub use window::{AppWindow, RemoteWindow};

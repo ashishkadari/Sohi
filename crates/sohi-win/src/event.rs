@@ -15,6 +15,8 @@ use std::rc::Rc;
 pub enum WinEvent {
     /// Another launch asked this instance to wake.
     WakeRequested,
+    /// The frame timer ticked: time to draw the next animation frame.
+    Frame,
     /// Left click released on the head.
     HeadClicked,
     /// Right click released on the head, at screen coordinates.
