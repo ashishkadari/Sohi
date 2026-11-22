@@ -5,12 +5,17 @@
 //! safe RAII wrappers to the rest of the workspace.
 
 mod error;
+mod event;
 mod handle;
+mod hwnd;
 mod instance;
+mod msgloop;
 pub mod perf;
 mod window;
 
 pub use error::WinError;
+pub use event::{EventQueue, WinEvent};
 pub use handle::OwnedHandle;
 pub use instance::{SingleInstance, forward_to_running_instance, register_window_message};
-pub use window::{AppWindow, RemoteWindow, WinEvent, run_message_loop};
+pub use msgloop::{post_quit, run_message_loop};
+pub use window::{AppWindow, RemoteWindow};

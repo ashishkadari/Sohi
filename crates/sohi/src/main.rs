@@ -10,7 +10,7 @@ mod perf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use sohi_win::{AppWindow, SingleInstance, WinEvent};
+use sohi_win::{AppWindow, EventQueue, SingleInstance, WinEvent};
 
 /// Named mutex that marks the running instance (spec §5.8).
 const INSTANCE_MUTEX: &str = r"Local\Sohi.SingleInstance";
@@ -80,16 +80,17 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     }
     assert!(!args.test_panic, "--test-panic requested");
 
-    let window = AppWindow::create(APP_WINDOW_CLASS, wake_message, |event| match event {
-        WinEvent::WakeRequested => log::info!("wake requested"),
-    })?;
+    let queue = EventQueue::new();
+    let window = AppWindow::create(APP_WINDOW_CLASS, wake_message, queue.clone())?;
 
     // Armed: every startup step is done (spec §5.8 step 4).
     let _armed_event = match args.perf {
         Some(idle) => Some(perf::on_armed(window.remote(), idle)?),
         None => None,
     };
-    let code = sohi_win::run_message_loop();
+    let code = sohi_win::run_message_loop(&queue, |event| match event {
+        WinEvent::WakeRequested => log::info!("wake requested"),
+    });
     log::info!("exiting with code {code}");
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }
