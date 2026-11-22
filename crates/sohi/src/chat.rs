@@ -152,6 +152,10 @@ async fn run_cancellable(
     tokio::pin!(run);
     loop {
         tokio::select! {
+            // The turn first: it gets polled at least once (so it starts)
+            // and a turn that is already done finishes rather than being
+            // reported as cancelled. Random order made this flaky.
+            biased;
             () = &mut run => return Outcome::Finished,
             request = requests.recv() => match request {
                 Some(Request::Cancel { turn, at }) if turn == id => {
