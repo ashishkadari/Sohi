@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use sohi_core::chat::Message;
 use sohi_core::secret::{KeyName, Secret};
+use sohi_providers::retry::{jitter_seed, retry_delay, retry_once};
 use sohi_providers::{
     Anthropic, ChatRequest, HttpClient, Mistral, ProviderError, anthropic, mistral,
 };
@@ -206,7 +207,7 @@ async fn chat(
     ui: &UiLink<Update>,
 ) -> Result<String, ProviderError> {
     let mut reply = String::new();
-    let primary = stream(Provider::Mistral, http, &turn.model, turn, ui, &mut reply).await;
+    let primary = attempt(Provider::Mistral, http, &turn.model, turn, ui, &mut reply).await;
     let error = match primary {
         Ok(()) => return Ok(reply),
         Err(error) => error,
@@ -218,7 +219,7 @@ async fn chat(
         "turn {}: Mistral failed ({error}); trying Anthropic",
         turn.turn
     );
-    match stream(
+    match attempt(
         Provider::Anthropic,
         http,
         &turn.fallback_model,
@@ -249,6 +250,29 @@ impl Provider {
             Self::Anthropic => KeyName::Anthropic,
         }
     }
+}
+
+/// One provider, with one retry for a 429 or 5xx before any text.
+async fn attempt(
+    provider: Provider,
+    http: &HttpClient,
+    model: &str,
+    turn: &ChatTurn,
+    ui: &UiLink<Update>,
+    reply: &mut String,
+) -> Result<(), ProviderError> {
+    let delay = retry_delay(jitter_seed());
+    let on_retry = |error: &ProviderError| {
+        log::info!(
+            "turn {}: {provider:?} failed ({error}); retrying in {} ms",
+            turn.turn,
+            delay.as_millis()
+        );
+    };
+    retry_once(reply, delay, on_retry, async |reply: &mut String| {
+        stream(provider, http, model, turn, ui, reply).await
+    })
+    .await
 }
 
 /// Streams one attempt into `reply`, forwarding each piece to the UI.

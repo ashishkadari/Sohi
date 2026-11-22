@@ -13,7 +13,6 @@ use sohi_core::interaction::{ERROR_HOLD, Effect, Event, Interaction, State};
 use sohi_core::persona::text_system_prompt;
 use sohi_core::pill::pill_origin;
 use sohi_core::visibility::{Input, Phase};
-use sohi_providers::ProviderError;
 use sohi_win::{AppTimer, EventQueue, PillWindow, RemoteWindow, TimerHost, WinEvent};
 
 use crate::chat::{ChatTurn, Request, Update};
@@ -139,7 +138,7 @@ impl TextMode {
                     }
                     Event::TurnFailed {
                         turn,
-                        message: user_message(&error),
+                        message: error.user_message(),
                     }
                 }
             };
@@ -305,15 +304,5 @@ impl TextMode {
             }
         }
         self.runtime.as_ref()
-    }
-}
-
-/// What the bubble says about a failure (spec §9.2: never raw errors).
-fn user_message(error: &ProviderError) -> String {
-    match error {
-        ProviderError::MissingKey(name) => {
-            format!("No API key is set. Run: sohi.exe --set-key {name}")
-        }
-        _ => "Something went wrong. See the log for details.".to_owned(),
     }
 }

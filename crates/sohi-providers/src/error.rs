@@ -59,6 +59,28 @@ impl ProviderError {
         Self::Offline(err.to_string())
     }
 
+    /// What the bubble says (spec §9.2: never a raw error, status or body;
+    /// the log gets those).
+    #[must_use]
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::MissingKey(name) => {
+                format!("No API key is set. Run: sohi.exe --set-key {name}")
+            }
+            Self::Offline(_) => "Can't reach the service. Check your connection.".to_owned(),
+            Self::Auth(_) => {
+                "The API key was rejected. Set it again with sohi.exe --set-key.".to_owned()
+            }
+            Self::RateLimited => "Too many requests right now. Try again in a moment.".to_owned(),
+            Self::Server(_) => "The service is having trouble. Try again in a moment.".to_owned(),
+            Self::BadResponse(_) => {
+                "Got an answer I couldn't read. Details are in the log.".to_owned()
+            }
+            Self::Refused => "I can't help with that one.".to_owned(),
+            Self::Cancelled => "Cancelled.".to_owned(),
+        }
+    }
+
     /// Whether repeating the same request might succeed (spec §5.3: one
     /// retry for 429 and 5xx).
     #[must_use]
@@ -102,5 +124,31 @@ mod tests {
         assert!(!ProviderError::Auth(401).is_retryable());
         assert!(!ProviderError::Offline(String::new()).is_retryable());
         assert!(!ProviderError::Cancelled.is_retryable());
+    }
+
+    #[test]
+    fn user_messages_never_show_details() {
+        let secretish = "HTTP 400: {\"error\":\"sk-123 bad\"}".to_owned();
+        let errors = [
+            ProviderError::MissingKey("mistral"),
+            ProviderError::Offline(secretish.clone()),
+            ProviderError::Auth(401),
+            ProviderError::RateLimited,
+            ProviderError::Server(503),
+            ProviderError::BadResponse(secretish),
+            ProviderError::Refused,
+            ProviderError::Cancelled,
+        ];
+        for error in errors {
+            let message = error.user_message();
+            assert_ne!(message, "");
+            assert!(!message.contains("HTTP"), "{message}");
+            assert!(!message.contains("sk-"), "{message}");
+            assert!(!message.chars().any(|c| c.is_ascii_digit()), "{message}");
+        }
+        assert_eq!(
+            ProviderError::MissingKey("anthropic").user_message(),
+            "No API key is set. Run: sohi.exe --set-key anthropic"
+        );
     }
 }
