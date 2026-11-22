@@ -16,6 +16,7 @@ sohi-core = { path = "crates/sohi-core" }
 sohi-render = { path = "crates/sohi-render" }
 sohi-win = { path = "crates/sohi-win" }
 
+reqwest = { version = "0.13.5", default-features = false, features = ["native-tls"] }
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
 toml = { version = "1.2.2", default-features = false, features = ["std", "parse", "serde"] }
 log = { version = "0.4.35", default-features = false, features = ["std"] }
