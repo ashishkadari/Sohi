@@ -19,6 +19,8 @@ pub struct App {
     hovered: bool,
     /// Running `--dev-test-card` pulse, if any.
     test_card: Option<TestCardPulse>,
+    /// Whether the static test card is on screen (redrawn on DPI change).
+    showing_test_card: bool,
 }
 
 impl App {
@@ -34,6 +36,7 @@ impl App {
             head_rect: RectPx::default(),
             hovered: false,
             test_card: None,
+            showing_test_card: false,
         };
         app.relayout();
         Ok(app)
@@ -44,6 +47,7 @@ impl App {
         match event {
             WinEvent::WakeRequested => log::info!("wake requested"),
             WinEvent::Frame => self.on_frame(),
+            WinEvent::DisplayChanged => self.on_display_changed(),
             WinEvent::HeadClicked => log::info!("head clicked"),
             WinEvent::HeadContextMenu { x, y } => log::info!("head context menu at ({x}, {y})"),
             WinEvent::HeadHover(over) => {
@@ -61,6 +65,7 @@ impl App {
     pub fn show_test_card(&mut self) -> Result<(), WinError> {
         self.draw_test_card(0)?;
         self.head.show();
+        self.showing_test_card = true;
         self.test_card = Some(TestCardPulse::new(Instant::now()));
         self.timer.start(FRAME_30_FPS);
         Ok(())
@@ -89,6 +94,16 @@ impl App {
         }
     }
 
+    fn on_display_changed(&mut self) {
+        log::info!("display changed");
+        if self.relayout() && self.showing_test_card && self.test_card.is_none() {
+            // Static content: redraw once at the new size and position.
+            if let Err(err) = self.draw_test_card(128) {
+                log::warn!("test card redraw failed: {err}");
+            }
+        }
+    }
+
     fn draw_test_card(&mut self, level: u8) -> Result<(), WinError> {
         let (w, h) = (self.head_rect.width(), self.head_rect.height());
         let pixels = sohi_render::test_card(w, h, level);
@@ -102,12 +117,13 @@ impl App {
     }
 
     /// Recomputes the head position from the primary monitor's work area.
-    fn relayout(&mut self) {
+    /// Returns `true` if it moved or changed size.
+    fn relayout(&mut self) -> bool {
         let monitor = match sohi_win::primary_monitor() {
             Ok(m) => m,
             Err(err) => {
                 log::warn!("cannot read primary monitor: {err}");
-                return;
+                return false;
             }
         };
         let rect = head_window_rect(monitor.work, monitor.dpi);
@@ -119,6 +135,8 @@ impl App {
             );
             self.head.set_rect(rect);
             self.head_rect = rect;
+            return true;
         }
+        false
     }
 }

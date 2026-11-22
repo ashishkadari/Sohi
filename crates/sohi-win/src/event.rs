@@ -17,6 +17,9 @@ pub enum WinEvent {
     WakeRequested,
     /// The frame timer ticked: time to draw the next animation frame.
     Frame,
+    /// Resolution, scaling, work area or primary monitor may have changed;
+    /// placement must be recomputed.
+    DisplayChanged,
     /// Left click released on the head.
     HeadClicked,
     /// Right click released on the head, at screen coordinates.

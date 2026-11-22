@@ -1,15 +1,16 @@
 //! The hidden application window.
 //!
 //! It is never shown. It receives app-wide messages: the second-instance
-//! wake message now, and later the tray callback and system broadcasts.
+//! wake message, display and work-area broadcasts, and later the tray
+//! callback.
 //! Destroying it (`WM_CLOSE`) ends the message loop.
 
 use std::ffi::c_void;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    PostMessageW, PostQuitMessage, WM_CLOSE, WM_DESTROY, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_POPUP,
+    PostMessageW, PostQuitMessage, SPI_SETWORKAREA, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE,
+    WM_DPICHANGED, WM_SETTINGCHANGE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use crate::hwnd::{OwnedHwnd, WindowSpec, WndHandler, create_window};
@@ -65,10 +66,18 @@ impl WndHandler for AppHandler {
         &self,
         _hwnd: HWND,
         msg: u32,
-        _wparam: WPARAM,
+        wparam: WPARAM,
         _lparam: LPARAM,
     ) -> Option<LRESULT> {
         match msg {
+            WM_DISPLAYCHANGE | WM_DPICHANGED => {
+                self.queue.push(WinEvent::DisplayChanged);
+                Some(LRESULT(0))
+            }
+            WM_SETTINGCHANGE if wparam.0 == SPI_SETWORKAREA.0 as usize => {
+                self.queue.push(WinEvent::DisplayChanged);
+                Some(LRESULT(0))
+            }
             m if m == self.wake_message => {
                 self.queue.push(WinEvent::WakeRequested);
                 Some(LRESULT(0))
@@ -98,5 +107,52 @@ impl RemoteWindow {
         // WM_CLOSE carries no pointers.
         unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }
             .map_err(|e| WinError::api("PostMessageW", &e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
+
+    fn send(window: &AppWindow, msg: u32, wparam: usize, lparam: isize) {
+        // SAFETY: in-process send to a window created on this thread; the
+        // only pointer argument (WM_DPICHANGED's RECT) outlives the call.
+        unsafe {
+            SendMessageW(
+                window.hwnd.raw(),
+                msg,
+                Some(WPARAM(wparam)),
+                Some(LPARAM(lparam)),
+            )
+        };
+    }
+
+    #[test]
+    fn display_messages_become_display_changed() {
+        let queue = EventQueue::new();
+        let window = AppWindow::create("Sohi.Test.App", 0xC123, queue.clone()).unwrap();
+        let suggested = RECT::default();
+        send(&window, WM_DISPLAYCHANGE, 32, 0);
+        send(&window, WM_SETTINGCHANGE, SPI_SETWORKAREA.0 as usize, 0);
+        send(&window, WM_SETTINGCHANGE, 0x57, 0); // unrelated setting: ignored
+        send(
+            &window,
+            WM_DPICHANGED,
+            0x0090_0090,
+            (&raw const suggested) as isize,
+        );
+        send(&window, 0xC123, 0, 0);
+        let events: Vec<_> = std::iter::from_fn(|| queue.pop()).collect();
+        assert_eq!(
+            events,
+            [
+                WinEvent::DisplayChanged,
+                WinEvent::DisplayChanged,
+                WinEvent::DisplayChanged,
+                WinEvent::WakeRequested,
+            ]
+        );
     }
 }

@@ -14,9 +14,9 @@ use windows::Win32::Graphics::Gdi::{AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION, Cl
 use windows::Win32::UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
     HWND_TOPMOST, IsWindowVisible, MA_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WM_LBUTTONUP,
-    WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_RBUTTONUP, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow,
+    WM_DPICHANGED, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_RBUTTONUP, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::hwnd::{OwnedHwnd, WindowSpec, WndHandler, create_window};
@@ -228,6 +228,12 @@ fn client_point(lparam: LPARAM) -> POINT {
 impl WndHandler for HeadHandler {
     fn on_message(&self, hwnd: HWND, msg: u32, _wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
         match msg {
+            WM_DPICHANGED => {
+                // We size and place ourselves from the primary monitor, so
+                // the suggested rectangle in lparam is ignored.
+                self.queue.push(WinEvent::DisplayChanged);
+                Some(LRESULT(0))
+            }
             WM_MOUSEACTIVATE => Some(LRESULT(isize::try_from(MA_NOACTIVATE).unwrap_or(3))),
             WM_MOUSEMOVE => {
                 self.on_mouse_move(hwnd);
