@@ -19,7 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
-use crate::hwnd::{OwnedHwnd, WindowSpec, WndHandler, create_window};
+use crate::hwnd::{OwnedHwnd, WindowSpec, WndHandler, create_window, signed_words};
 use crate::surface::{Surface, swizzle_rgba_to_bgra};
 use crate::{EventQueue, WinError, WinEvent};
 
@@ -215,14 +215,10 @@ impl HeadHandler {
     }
 }
 
-/// Splits a mouse-message `LPARAM` into signed client coordinates
-/// (the low and high words are signed 16-bit values).
+/// Mouse-message `LPARAM` to a client-coordinate point.
 fn client_point(lparam: LPARAM) -> POINT {
-    let raw = lparam.0.to_le_bytes();
-    POINT {
-        x: i32::from(i16::from_le_bytes([raw[0], raw[1]])),
-        y: i32::from(i16::from_le_bytes([raw[2], raw[3]])),
-    }
+    let (x, y) = signed_words(lparam.0);
+    POINT { x, y }
 }
 
 impl WndHandler for HeadHandler {

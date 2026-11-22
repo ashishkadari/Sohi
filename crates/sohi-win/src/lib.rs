@@ -13,8 +13,10 @@ mod instance;
 mod monitor;
 mod msgloop;
 pub mod perf;
+pub mod shell;
 mod surface;
 mod timer;
+mod tray;
 mod window;
 
 pub use error::WinError;
@@ -25,4 +27,5 @@ pub use instance::{SingleInstance, forward_to_running_instance, register_window_
 pub use monitor::{MonitorInfo, primary_monitor};
 pub use msgloop::{post_quit, run_message_loop};
 pub use timer::{FRAME_30_FPS, FRAME_60_FPS, FrameTimer};
+pub use tray::{MenuItem, TrayIcon};
 pub use window::{AppWindow, RemoteWindow};

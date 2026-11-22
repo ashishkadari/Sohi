@@ -43,6 +43,16 @@ impl Drop for OwnedHwnd {
     }
 }
 
+/// Splits a packed coordinate pair (`MAKELPARAM` layout: low word x, high
+/// word y, each a signed 16-bit value) into screen or client coordinates.
+pub(crate) fn signed_words(v: isize) -> (i32, i32) {
+    let raw = v.to_le_bytes();
+    (
+        i32::from(i16::from_le_bytes([raw[0], raw[1]])),
+        i32::from(i16::from_le_bytes([raw[2], raw[3]])),
+    )
+}
+
 /// Window class and style parameters for [`create_window`].
 pub(crate) struct WindowSpec<'a> {
     pub class_name: &'a str,

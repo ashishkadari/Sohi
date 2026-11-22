@@ -1,16 +1,37 @@
 //! UI-thread application state: owns the windows and reacts to events.
 
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Instant;
 
-use sohi_core::geometry::{RectPx, head_window_rect};
-use sohi_win::{EventQueue, FRAME_30_FPS, Frame, FrameTimer, HeadWindow, WinError, WinEvent};
+use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
+use sohi_win::shell::{OpenError, open_path, open_with};
+use sohi_win::{
+    AppWindow, EventQueue, FRAME_30_FPS, Frame, FrameTimer, HeadWindow, RemoteWindow, TrayIcon,
+    WinError, WinEvent,
+};
 
 use crate::dev::TestCardPulse;
+use crate::tray_menu::{self, MenuCommand, MenuState};
+
+/// Files the menu can open.
+pub struct Paths {
+    /// `config.toml`.
+    pub config: PathBuf,
+    /// The log folder.
+    pub logs: PathBuf,
+}
 
 /// Everything the UI thread owns.
 pub struct App {
     head: HeadWindow,
+    tray: TrayIcon,
+    /// For quitting: closing the app window ends the message loop.
+    main_window: RemoteWindow,
+    paths: Paths,
+    menu_state: MenuState,
+    /// DPI the head and tray icon were last laid out for.
+    dpi: u32,
     /// Shared with the message loop; ticks only while something animates.
     timer: Rc<FrameTimer>,
     /// Current head window rectangle in physical pixels.
@@ -24,14 +45,27 @@ pub struct App {
 }
 
 impl App {
-    /// Creates the (hidden) head window and places it on the primary monitor.
+    /// Creates the (hidden) head window, places it on the primary monitor
+    /// and adds the tray icon.
     ///
     /// # Errors
-    /// Returns [`WinError`] if a window cannot be created.
-    pub fn new(queue: &EventQueue, timer: Rc<FrameTimer>) -> Result<Self, WinError> {
+    /// Returns [`WinError`] if a window or the tray icon cannot be created.
+    pub fn new(
+        queue: &EventQueue,
+        timer: Rc<FrameTimer>,
+        window: &AppWindow,
+        paths: Paths,
+    ) -> Result<Self, WinError> {
         let head = HeadWindow::create(queue.clone())?;
+        let dpi = sohi_win::primary_monitor().map_or(BASE_DPI, |m| m.dpi);
+        let tray = TrayIcon::add(window, dpi, sohi_render::tray_icon)?;
         let mut app = Self {
             head,
+            tray,
+            main_window: window.remote(),
+            paths,
+            menu_state: MenuState::default(),
+            dpi,
             timer,
             head_rect: RectPx::default(),
             hovered: false,
@@ -49,7 +83,16 @@ impl App {
             WinEvent::Frame => self.on_frame(),
             WinEvent::DisplayChanged => self.on_display_changed(),
             WinEvent::HeadClicked => log::info!("head clicked"),
-            WinEvent::HeadContextMenu { x, y } => log::info!("head context menu at ({x}, {y})"),
+            WinEvent::HeadContextMenu { x, y } | WinEvent::TrayMenu { x, y } => {
+                self.show_menu(x, y);
+            }
+            WinEvent::TrayActivated => log::info!("tray icon activated"),
+            WinEvent::TaskbarCreated => {
+                log::info!("taskbar restarted; re-adding tray icon");
+                if let Err(err) = self.tray.readd() {
+                    log::warn!("cannot re-add tray icon: {err}");
+                }
+            }
             WinEvent::HeadHover(over) => {
                 log::debug!("head hover: {over}");
                 self.hovered = over;
@@ -94,6 +137,35 @@ impl App {
         }
     }
 
+    fn show_menu(&mut self, x: i32, y: i32) {
+        let items = tray_menu::items(self.menu_state);
+        let chosen = self.tray.show_menu(&items, x, y);
+        let Some(command) = chosen.and_then(MenuCommand::from_id) else {
+            return;
+        };
+        log::info!("menu: {command:?}");
+        match command {
+            MenuCommand::OpenConfig => open_config(&self.paths.config),
+            MenuCommand::OpenLogFolder => {
+                if let Err(err) = open_path(&self.paths.logs) {
+                    log::warn!("cannot open log folder: {err:?}");
+                }
+            }
+            MenuCommand::Quit => {
+                if let Err(err) = self.main_window.post_close() {
+                    log::error!("cannot quit cleanly: {err}");
+                    sohi_win::post_quit(0);
+                }
+            }
+            MenuCommand::Talk
+            | MenuCommand::Type
+            | MenuCommand::ForceOffline
+            | MenuCommand::StartWithWindows => {
+                log::info!("{command:?} is not available yet");
+            }
+        }
+    }
+
     fn on_display_changed(&mut self) {
         log::info!("display changed");
         if self.relayout() && self.showing_test_card && self.test_card.is_none() {
@@ -126,6 +198,12 @@ impl App {
                 return false;
             }
         };
+        if monitor.dpi != self.dpi {
+            self.dpi = monitor.dpi;
+            if let Err(err) = self.tray.set_dpi(monitor.dpi, sohi_render::tray_icon) {
+                log::warn!("cannot resize tray icon: {err}");
+            }
+        }
         let rect = head_window_rect(monitor.work, monitor.dpi);
         if rect != self.head_rect {
             log::info!(
@@ -138,5 +216,17 @@ impl App {
             return true;
         }
         false
+    }
+}
+
+/// Opens the config in its associated editor, or Notepad if `.toml` has
+/// no association (common on a fresh Windows install).
+fn open_config(path: &Path) {
+    let result = match open_path(path) {
+        Err(OpenError::NoAssociation) => open_with("notepad.exe", path),
+        other => other,
+    };
+    if let Err(err) = result {
+        log::warn!("cannot open config: {err:?}");
     }
 }

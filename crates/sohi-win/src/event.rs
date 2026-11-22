@@ -31,6 +31,17 @@ pub enum WinEvent {
     },
     /// The pointer entered (`true`) or left (`false`) the head's opaque pixels.
     HeadHover(bool),
+    /// The tray icon was right-clicked (or menu key), at screen coordinates.
+    TrayMenu {
+        /// Screen x.
+        x: i32,
+        /// Screen y.
+        y: i32,
+    },
+    /// The tray icon was left-clicked or activated from the keyboard.
+    TrayActivated,
+    /// Explorer (re)started: the tray icon must be added again.
+    TaskbarCreated,
 }
 
 /// Shared, single-threaded FIFO of [`WinEvent`]s.

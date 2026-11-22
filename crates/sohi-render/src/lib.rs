@@ -47,6 +47,25 @@ pub fn test_card(width: u32, height: u32, level: u8) -> Vec<u8> {
     out
 }
 
+/// Sohi's red accent (`RED_ACTIVE`, spec §4.5).
+const RED: [u8; 3] = [0xE3, 0x19, 0x2B];
+
+/// The tray icon (spec §4.8): an opaque red square on a clear background,
+/// `size` x `size` RGBA, inset by an eighth of the size on each side.
+#[must_use]
+pub fn tray_icon(size: u32) -> Vec<u8> {
+    let n = size as usize;
+    let inset = n / 8;
+    let mut out = vec![0u8; n * n * 4];
+    for y in inset..n - inset {
+        for x in inset..n - inset {
+            let i = (y * n + x) * 4;
+            out[i..i + 4].copy_from_slice(&[RED[0], RED[1], RED[2], 255]);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,6 +73,19 @@ mod tests {
     fn pixel(buf: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
         let i = ((y * w + x) * 4) as usize;
         [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
+    }
+
+    #[test]
+    fn tray_icon_is_inset_red_square() {
+        for size in [16, 20, 24, 32] {
+            let buf = tray_icon(size);
+            assert_eq!(buf.len(), (size * size * 4) as usize);
+            assert_eq!(pixel(&buf, size, 0, 0), [0, 0, 0, 0]);
+            assert_eq!(
+                pixel(&buf, size, size / 2, size / 2),
+                [0xE3, 0x19, 0x2B, 255]
+            );
+        }
     }
 
     #[test]

@@ -1,8 +1,8 @@
 //! The hidden application window.
 //!
 //! It is never shown. It receives app-wide messages: the second-instance
-//! wake message, display and work-area broadcasts, and later the tray
-//! callback.
+//! wake message, display and work-area broadcasts, the tray callback and
+//! `TaskbarCreated`.
 //! Destroying it (`WM_CLOSE`) ends the message loop.
 
 use std::ffi::c_void;
@@ -13,8 +13,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_DPICHANGED, WM_SETTINGCHANGE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
-use crate::hwnd::{OwnedHwnd, WindowSpec, WndHandler, create_window};
-use crate::{EventQueue, WinError, WinEvent};
+use crate::hwnd::{OwnedHwnd, WindowSpec, WndHandler, create_window, signed_words};
+use crate::tray::TRAY_CALLBACK;
+use crate::{EventQueue, WinError, WinEvent, register_window_message};
+
+/// Tray notification codes (low word of `lParam`, version 4).
+const NIN_SELECT: u32 = 0x0400;
+const NIN_KEYSELECT: u32 = 0x0401;
+const WM_CONTEXTMENU: u32 = 0x007B;
 
 /// The hidden top-level window that receives app-wide messages.
 pub struct AppWindow {
@@ -39,14 +45,20 @@ impl AppWindow {
             ex_style: WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             style: WS_POPUP,
         };
+        let taskbar_created = register_window_message("TaskbarCreated")?;
         let hwnd = create_window(
             &spec,
             Box::new(AppHandler {
                 wake_message,
+                taskbar_created,
                 queue,
             }),
         )?;
         Ok(Self { hwnd })
+    }
+
+    pub(crate) fn raw(&self) -> HWND {
+        self.hwnd.raw()
     }
 
     /// Returns a `Send` reference for posting to this window from other threads.
@@ -58,18 +70,33 @@ impl AppWindow {
 
 struct AppHandler {
     wake_message: u32,
+    taskbar_created: u32,
     queue: EventQueue,
 }
 
+impl AppHandler {
+    fn on_tray(&self, wparam: WPARAM, lparam: LPARAM) {
+        let event = u32::try_from(lparam.0 & 0xFFFF).unwrap_or(0);
+        let (x, y) = signed_words(wparam.0.cast_signed());
+        match event {
+            WM_CONTEXTMENU => self.queue.push(WinEvent::TrayMenu { x, y }),
+            NIN_SELECT | NIN_KEYSELECT => self.queue.push(WinEvent::TrayActivated),
+            _ => {}
+        }
+    }
+}
+
 impl WndHandler for AppHandler {
-    fn on_message(
-        &self,
-        _hwnd: HWND,
-        msg: u32,
-        wparam: WPARAM,
-        _lparam: LPARAM,
-    ) -> Option<LRESULT> {
+    fn on_message(&self, _hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
         match msg {
+            TRAY_CALLBACK => {
+                self.on_tray(wparam, lparam);
+                Some(LRESULT(0))
+            }
+            m if m == self.taskbar_created => {
+                self.queue.push(WinEvent::TaskbarCreated);
+                Some(LRESULT(0))
+            }
             WM_DISPLAYCHANGE | WM_DPICHANGED => {
                 self.queue.push(WinEvent::DisplayChanged);
                 Some(LRESULT(0))

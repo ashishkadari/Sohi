@@ -8,6 +8,7 @@ mod config_file;
 mod dev;
 mod logger;
 mod perf;
+mod tray_menu;
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -90,7 +91,11 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     let queue = EventQueue::new();
     let window = AppWindow::create(APP_WINDOW_CLASS, wake_message, queue.clone())?;
     let timer = Rc::new(FrameTimer::new()?);
-    let mut app = app::App::new(&queue, Rc::clone(&timer))?;
+    let paths = app::Paths {
+        config: config_file::default_path(),
+        logs: logger::default_dir(),
+    };
+    let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths)?;
     if args.dev_test_card {
         app.show_test_card()?;
     }
