@@ -31,6 +31,8 @@ pub struct Config {
     pub stt: SttConfig,
     /// Text-to-speech.
     pub tts: TtsConfig,
+    /// How Sohi talks to the user.
+    pub persona: PersonaConfig,
     /// Text-mode behaviour.
     pub text: TextConfig,
     /// Tool policy overrides.
@@ -108,6 +110,22 @@ impl Default for UiConfig {
         Self {
             launch_peek: true,
             reduced_motion: ReducedMotion::System,
+        }
+    }
+}
+
+/// `[persona]` section.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct PersonaConfig {
+    /// Name Sohi calls the user; empty means no name.
+    pub user_name: String,
+}
+
+impl Default for PersonaConfig {
+    fn default() -> Self {
+        Self {
+            user_name: "Ashish".to_owned(),
         }
     }
 }

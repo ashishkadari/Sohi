@@ -6,6 +6,8 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+sohi-core.workspace = true
+sohi-render.workspace = true
 
 [lints]
 workspace = true

@@ -6,6 +6,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+sohi-core.workspace = true
 thiserror.workspace = true
 windows.workspace = true
 

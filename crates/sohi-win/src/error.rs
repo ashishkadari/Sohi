@@ -28,6 +28,15 @@ impl WinError {
         Self::api(api, &err)
     }
 
+    /// An argument Sohi passed was out of range (`E_INVALIDARG`).
+    pub(crate) fn invalid(api: &'static str, what: &str) -> Self {
+        Self {
+            api,
+            code: 0x8007_0057,
+            message: format!("invalid {what}"),
+        }
+    }
+
     /// Name of the failing API.
     #[must_use]
     pub fn api_name(&self) -> &'static str {

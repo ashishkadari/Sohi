@@ -151,7 +151,7 @@ fn budget_rows(m: &BTreeMap<String, f64>, size: u64) -> Result<Vec<Row>, String>
         limit,
         unit,
     };
-    Ok(vec![
+    let mut rows = vec![
         row("cold start to armed", get("armed_ms")?, 120.0, "ms"),
         row(
             "pre-first-wake private",
@@ -173,7 +173,15 @@ fn budget_rows(m: &BTreeMap<String, f64>, size: u64) -> Result<Vec<Row>, String>
             "ms",
         ),
         row("binary size", size as f64 / MB, 8.0, "MB"),
-    ])
+    ];
+    // Present only when the launch peek ran.
+    if let Some(&v) = m.get("first_frame_ms") {
+        rows.insert(1, row("cold start to first frame", v, 200.0, "ms"));
+    }
+    if let Some(&v) = m.get("head_frame_p95_ms") {
+        rows.push(row("head frame p95", v, 0.5, "ms"));
+    }
+    Ok(rows)
 }
 
 fn render_table(rows: &[Row]) -> String {

@@ -3,14 +3,19 @@
 #![forbid(unsafe_code)]
 #![windows_subsystem = "windows"]
 
+mod app;
 mod config_file;
+mod dev;
 mod logger;
 mod perf;
+mod tray_menu;
 
 use std::process::ExitCode;
 use std::time::Duration;
 
-use sohi_win::{AppWindow, SingleInstance, WinEvent};
+use std::rc::Rc;
+
+use sohi_win::{AppWindow, EventQueue, FrameTimer, SingleInstance};
 
 /// Named mutex that marks the running instance (spec §5.8).
 const INSTANCE_MUTEX: &str = r"Local\Sohi.SingleInstance";
@@ -24,6 +29,10 @@ const WAKE_MESSAGE: &str = "Sohi.Wake";
 struct Args {
     /// Panic right after startup to exercise the panic hook (P0 acceptance).
     test_panic: bool,
+    /// Show the neutral test card in the head window (plumbing check).
+    dev_test_card: bool,
+    /// Reveal the head and cycle through every visual state.
+    dev_states: bool,
     /// `--perf[=<idle seconds>]`: print `perf:` lines, then exit after the
     /// idle sample.
     perf: Option<Duration>,
@@ -36,6 +45,8 @@ impl Args {
         for arg in args {
             match arg.as_str() {
                 "--test-panic" => parsed.test_panic = true,
+                "--dev-test-card" => parsed.dev_test_card = true,
+                "--dev-states" => parsed.dev_states = true,
                 "--perf" => parsed.perf = Some(perf::DEFAULT_IDLE),
                 _ => match arg.strip_prefix("--perf=").map(str::parse) {
                     Some(Ok(secs)) => parsed.perf = Some(Duration::from_secs(secs)),
@@ -80,16 +91,32 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     }
     assert!(!args.test_panic, "--test-panic requested");
 
-    let window = AppWindow::create(APP_WINDOW_CLASS, wake_message, |event| match event {
-        WinEvent::WakeRequested => log::info!("wake requested"),
-    })?;
+    let queue = EventQueue::new();
+    let window = AppWindow::create(APP_WINDOW_CLASS, wake_message, queue.clone())?;
+    let timer = Rc::new(FrameTimer::new()?);
+    let paths = app::Paths {
+        config: config_file::default_path(),
+        logs: logger::default_dir(),
+    };
+    let options = app::Options {
+        reduced_motion: config.ui.reduced_motion,
+        perf: args.perf.is_some(),
+    };
+    let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
+    if args.dev_test_card {
+        app.show_test_card()?;
+    } else if args.dev_states {
+        app.start_dev_cycle();
+    } else if config.ui.launch_peek {
+        app.peek(sohi_core::motion::LAUNCH_PEEK_HOLD);
+    }
 
     // Armed: every startup step is done (spec §5.8 step 4).
     let _armed_event = match args.perf {
         Some(idle) => Some(perf::on_armed(window.remote(), idle)?),
         None => None,
     };
-    let code = sohi_win::run_message_loop();
+    let code = sohi_win::run_message_loop(&queue, &timer, |event| app.handle(event));
     log::info!("exiting with code {code}");
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }

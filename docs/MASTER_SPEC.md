@@ -24,8 +24,11 @@ In every session:
 
 ### 1.1 Concept
 Sohi is an assistant in the style of JARVIS. It sits **hidden off-screen** (parked) in the top-right corner of the
-**primary display**. When woken, it **slides onto the screen** as a small always-on-top HUD widget: a minimalist **red
-rectangular "head"** inside a thin HUD bounding frame. The user talks to it (online voice pipeline) or types to it
+**primary display**. When woken, it **slides onto the screen** as a small always-on-top HUD widget: a minimalist
+**deep-crimson "head"** inside a thin HUD bounding frame. The head is an original 2D netrunner bust drawn as a crimson
+hologram, the **hooded ghost**: a dark hood with a crimson rim, a face hidden in shadow, two **round glowing eyes**, and a
+short glowing collar line on the chest (flat geometric shapes, no likeness of any existing character). The eyes take the
+visor's role (listening, brightness) and the collar line follows the speech envelope. The user talks to it (online voice pipeline) or types to it
 (text "pill"). Replies are spoken and/or shown as text. When nothing has happened for a while, it slides back off-screen.
 
 ### 1.2 Wake triggers
@@ -234,10 +237,10 @@ Right-click opens the same menu as the tray icon.
 
 ### 4.3 Slide behaviour (moves onto screen when woken)
 - **Parked:** the window is hidden and nothing renders.
-- **Reveal (180 ms, cubic ease-out):** call `SW_SHOWNOACTIVATE` at the final rectangle, then **translate the content inside the bitmap**
+- **Reveal (260 ms, cubic ease-out):** call `SW_SHOWNOACTIVATE` at the final rectangle, then **translate the content inside the bitmap**
   from `x = +window_width` (clipped, fully off the right edge) to `x = 0`, fading alpha 0→1 at the same time. This looks exactly like the widget
   sliding in from off-screen. **The window never moves across the monitor edge**, so it can never bleed onto a monitor to the right.
-- **Retract (140 ms, cubic ease-in):** the reverse, then `SW_HIDE` and the state becomes `Parked`.
+- **Retract (200 ms, cubic ease-in):** the reverse, then `SW_HIDE` and the state becomes `Parked`.
 - **Reduced motion:** if `SPI_GETCLIENTAREAANIMATION` is FALSE, use a 60 ms fade with no translation.
 - **Launch peek:** after start, reveal for 1.2 s in the Idle visual, then retract. This shows the user Sohi is alive. Config: `ui.launch_peek = true`.
 
@@ -253,7 +256,7 @@ Right-click opens the same menu as the tray icon.
 
 ### 4.5 Visual states (tokens)
 ~~~
-RED_ACTIVE  #E3192B   RED_IDLE  #8E1119   VISOR  #FF6B6B   FRAME = RED_ACTIVE @ 45% α
+RED_ACTIVE  #B0122A   RED_IDLE  #6D0B1A   VISOR  #FF4D5E   FRAME = RED_ACTIVE @ 45% α
 OFFLINE     #6B5557   AMBER     #FFB020   SHADOW = #000 @ 35% α, 6 DIP blur (pre-rendered once)
 ~~~
 | State | Head | Visor | Frame | Animation (only while revealed) |
@@ -280,7 +283,7 @@ once and resized only on DPI change. The static layers (shadow, head body) are p
 ### 4.6 Text pill (fallback / text mode)
 - A separate top-level window, **created lazily** on first use and **destroyed** 5 minutes after last use (to reclaim RAM).
 - Flags: `WS_POPUP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW`. It is not layered (child controls must paint). Win11 polish:
-  `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND`, `DWMWA_BORDER_COLOR = #E3192B` at low intensity, and
+  `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND`, `DWMWA_BORDER_COLOR = #B0122A` at low intensity, and
   `DWMWA_USE_IMMERSIVE_DARK_MODE = TRUE`.
 - Children: a single-line `EDIT` (input, `ES_AUTOHSCROLL`) and a multi-line read-only `EDIT` (the bubble), with
   `SetWindowTheme(L"DarkMode_Explorer")` for dark scrollbars. Colors come from `WM_CTLCOLOREDIT`/`WM_CTLCOLORSTATIC`:
@@ -314,7 +317,9 @@ fails (key combination in use), show a tray balloon and log it. Sohi keeps runni
 
 ### 4.8 Tray icon
 `Shell_NotifyIconW` with a 16/20/24/32 px red-square icon. Menu: *Talk* · *Type* · *Force offline ☐* · *Open config* ·
-*Open log folder* · *Start with Windows ☐* · *Quit*. Re-add the icon when the `TaskbarCreated` message arrives (Explorer restarted).
+*Open log folder* · *Start with Windows ☐* · *Quit*. The menu is **always dark**, whatever the Windows app theme:
+`SetPreferredAppMode(ForceDark)` + `FlushMenuThemes` (uxtheme.dll ordinals 135/136, undocumented but stable since
+Windows 10 1903 and used by Windows Terminal and Notepad++). If they cannot be resolved the menu uses the system theme. Re-add the icon when the `TaskbarCreated` message arrives (Explorer restarted).
 
 ---
 
@@ -416,6 +421,9 @@ async fn run_turn(input: TurnInput, cancel: CancelToken, ctx: &Ctx) -> Result<()
   the chunker emits "I've put the details in the text panel." once.
 - **System prompt (voice):** concise spoken style, ≤ 2 sentences by default, no markdown, and it receives the current local
   date/time and the list of available tools. Text turns may be longer and use markdown.
+- **Persona:** Sohi is a sharp-witted, calm American female netrunner with dry, sarcastic humour and a secretive, fiercely
+  loyal edge. She addresses the user as **Ashish** (config `persona.user_name`). The TTS voice is chosen to match: an
+  American female voice, calm and low-key.
 - **TTS:** prefer a provider output format of raw PCM/WAV streaming (no decoder needed). If only MP3/Opus is available, add a
   minimal decoder behind a cargo feature and record its size cost. The render thread uses WASAPI shared mode with
   `AUTOCONVERTPCM` at the provider's sample rate. The output envelope (RMS of each 20 ms block) drives the visor.
@@ -452,6 +460,7 @@ never as instructions, and the system prompt says so.
             fallback_provider = "anthropic"   anthropic_model = ""   offline_model = ""   # e.g. a small Ollama model
 [stt]       provider = "mistral"   model = "voxtral-mini-latest"   language = "auto"
 [tts]       provider = "mistral"   voice = ""   offline_voice = "system-default"
+[persona]   user_name = "Ashish"
 [text]      speak_replies = false
 [tools]     confirm = ["clipboard_get"]   disabled = []
 [history]   persist = false
@@ -488,7 +497,7 @@ All measured on the **release** build by `cargo xtask perf` on a mid-range Win11
 | **Cold start** | **≤ 120 ms to armed, ≤ 200 ms to first visible peek frame** | Process creation time → named event `Sohi.Armed` / first `UpdateLayeredWindow` (perf mode) |
 | **Binary size** | **≤ 8 MB** (stretch goal ≤ 5 MB) | Stripped release `sohi.exe` |
 | Wake → mic capturing | ≤ 80 ms | Wake event → first captured buffer timestamp |
-| Wake → reveal complete | ≤ 200 ms | Includes the 180 ms animation |
+| Wake → reveal complete | ≤ 280 ms | Includes the 260 ms animation |
 | Corner dwell → wake | 350 ms ± 60 ms | Includes poll granularity once in the NEAR band |
 | **End of speech → first TTS audio** | **≤ 1.5 s p50, ≤ 2.5 s p95** (online) | VAD end-of-speech decision → first PCM sample submitted to WASAPI render |
 | End of speech → first text token | ≤ 1.0 s p50 | VAD end-of-speech decision → first `LlmDelta` rendered |
