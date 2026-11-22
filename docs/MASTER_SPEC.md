@@ -854,6 +854,10 @@ minimum granularity, not a cap.
 
 ## Appendix A — [VERIFY] Register (check against current vendor docs before implementing)
 1. Voxtral transcription endpoint path, model ID (`voxtral-mini-latest`?), multipart field names, supported audio formats and size limits.
+   *(Verified 2026-11-22: `POST /v1/audio/transcriptions`, Bearer auth, multipart fields `file`, `model` and optional
+   `language` (ISO 639-1; left out to auto-detect); answer JSON `text`, `language`. `voxtral-mini-latest` is listed
+   for the account and transcribes the five P4 fixtures with 0/39 word errors in 220–320 ms; `voxtral-mini-transcribe-3`
+   scores the same. A WAV upload works; size limits not yet measured.)*
 2. Mistral TTS availability, endpoint, voice IDs, streaming support and output formats (PCM preferred). If unavailable, pick and document an alternative cloud TTS.
 3. Mistral function-calling schema and streaming tool-call delta format.
 4. Anthropic Messages API current model IDs and streaming event types for tool use. *(Text streaming verified 2026-11-22:

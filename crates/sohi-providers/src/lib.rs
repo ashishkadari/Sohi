@@ -10,6 +10,7 @@ pub mod retry;
 pub mod sse;
 #[cfg(test)]
 mod testserver;
+pub mod voxtral;
 
 use sohi_core::chat::Message;
 
@@ -17,6 +18,7 @@ pub use anthropic::Anthropic;
 pub use error::ProviderError;
 pub use http::{Auth, HttpClient};
 pub use mistral::Mistral;
+pub use voxtral::Voxtral;
 
 /// What a chat provider is asked.
 #[derive(Debug, Clone, Copy)]

@@ -331,7 +331,7 @@ async fn stream(
     Ok(())
 }
 
-fn read_key(name: KeyName) -> Result<Secret, ProviderError> {
+pub(crate) fn read_key(name: KeyName) -> Result<Secret, ProviderError> {
     match sohi_win::read_key(name.target()) {
         Ok(Some(key)) => Ok(key),
         Ok(None) => Err(ProviderError::MissingKey(name.as_str())),

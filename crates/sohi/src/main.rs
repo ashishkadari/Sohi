@@ -14,6 +14,7 @@ mod logger;
 mod perf;
 mod runtime;
 mod set_key;
+mod stt;
 mod text_mode;
 mod tray_menu;
 
