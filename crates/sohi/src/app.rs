@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 
 use sohi_core::config::{ReducedMotion, WakeConfig};
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
-use sohi_core::motion::LAUNCH_PEEK_HOLD;
 use sohi_core::visibility::{Input, Phase, RetractRule};
 use sohi_core::wake::CornerSettings;
 use sohi_win::shell::{OpenError, open_path, open_with};
@@ -104,8 +103,10 @@ impl App {
     pub fn handle(&mut self, event: WinEvent) {
         match event {
             WinEvent::WakeRequested => {
+                // A second launch: an explicit request, like a hotkey, so
+                // full-screen suppression does not apply (spec §5.8).
                 log::info!("wake requested");
-                self.peek(LAUNCH_PEEK_HOLD);
+                self.wake();
             }
             WinEvent::Frame => self.head.on_frame(),
             WinEvent::CursorPoll => self.on_cursor_poll(),
