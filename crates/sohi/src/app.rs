@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 use sohi_core::config::ReducedMotion;
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::motion::{LAUNCH_PEEK_HOLD, Pose, Slide};
+use sohi_core::visual::VisualState;
+use sohi_render::{HeadRenderer, Scene};
 use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{
     AppWindow, EventQueue, FRAME_30_FPS, FRAME_60_FPS, Frame, FrameTimer, HeadWindow, RemoteWindow,
@@ -76,9 +78,8 @@ pub struct App {
     reduced_pref: ReducedMotion,
     /// Reduced motion, decided when the current reveal started.
     reduced: bool,
-    /// Head pixels for the current window size. Placeholder test card
-    /// until the head itself is drawn (P1.3); regenerated on resize.
-    head_pixels: Vec<u8>,
+    /// Draws the head; recreated when the window size changes.
+    renderer: Option<HeadRenderer>,
     /// Perf mode only.
     perf: Option<PerfTrace>,
 }
@@ -126,7 +127,7 @@ impl App {
             visibility: Visibility::Parked,
             reduced_pref: options.reduced_motion,
             reduced: false,
-            head_pixels: Vec::new(),
+            renderer: None,
             perf: options.perf.then(PerfTrace::default),
         };
         app.relayout();
@@ -255,14 +256,17 @@ impl App {
     fn present_pose(&mut self, pose: Pose) {
         let started = Instant::now();
         let (w, h) = (self.head_rect.width(), self.head_rect.height());
-        let len = w as usize * h as usize * 4;
-        if self.head_pixels.len() != len {
-            self.head_pixels = sohi_render::test_card(w, h, 128);
+        if self.renderer.as_ref().map(HeadRenderer::size) != Some((w, h)) {
+            self.renderer = HeadRenderer::new(w, h);
         }
+        let Some(renderer) = self.renderer.as_mut() else {
+            log::warn!("cannot draw a {w}x{h} head");
+            return;
+        };
         let frame = Frame {
             width: w,
             height: h,
-            rgba: &self.head_pixels,
+            rgba: renderer.render(&Scene::new(VisualState::Idle, Duration::ZERO)),
         };
         let alpha = pose.alpha_u8();
         let result = self.head.present(

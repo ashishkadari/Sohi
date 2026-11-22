@@ -1,10 +1,14 @@
 //! Pure renderer: turns a visual state and time into a premultiplied pixmap.
 //!
-//! The real head, frame and visor drawing (spec §4.5) lands with the visual
-//! design. Until then this crate only provides a neutral [`test_card`] for
-//! exercising the window, blit and timing plumbing.
+//! [`HeadRenderer`] draws the head (spec §4.5). [`test_card`] is a neutral
+//! frame kept for plumbing checks (`--dev-test-card`), and [`tray_icon`]
+//! draws the notification-area icon.
 
 #![forbid(unsafe_code)]
+
+mod head;
+
+pub use head::{HeadRenderer, Scene};
 
 /// A neutral, deliberately non-final frame for plumbing tests.
 ///
