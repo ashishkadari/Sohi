@@ -98,6 +98,26 @@ impl Dwell {
     }
 }
 
+/// Why corner polling is paused: any of these stops it (spec §4.7).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)] // three independent conditions
+pub struct Away {
+    /// The session is locked.
+    pub locked: bool,
+    /// The console display is off.
+    pub display_off: bool,
+    /// The system is suspending.
+    pub suspended: bool,
+}
+
+impl Away {
+    /// Whether nobody can be at the corner right now.
+    #[must_use]
+    pub fn any(self) -> bool {
+        self.locked || self.display_off || self.suspended
+    }
+}
+
 /// The corner pixel the hot zone hangs from: the top-right pixel of
 /// `monitor` (`rcMonitor`, so it is the true screen corner even with a
 /// top taskbar).
@@ -253,6 +273,22 @@ mod tests {
         assert_eq!((s.zone_px, s.dwell, s.cooldown), (1, MS(5000), MS(60_000)));
         assert!(in_hot_zone((1919, 0), SCREEN, 1));
         assert!(!in_hot_zone((1918, 0), SCREEN, 1));
+    }
+
+    #[test]
+    fn any_absence_pauses() {
+        assert!(!Away::default().any());
+        let locked = Away {
+            locked: true,
+            ..Away::default()
+        };
+        assert!(locked.any());
+        // Unlocking with the display still off stays paused.
+        let dark = Away {
+            display_off: true,
+            ..Away::default()
+        };
+        assert!(dark.any());
     }
 
     #[test]

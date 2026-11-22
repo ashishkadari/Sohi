@@ -10,7 +10,9 @@ use sohi_core::motion::LAUNCH_PEEK_HOLD;
 use sohi_core::visibility::{Input, Phase, RetractRule};
 use sohi_core::wake::CornerSettings;
 use sohi_win::shell::{OpenError, open_path, open_with};
-use sohi_win::{AppWindow, EventQueue, FrameTimer, RemoteWindow, TrayIcon, WinError, WinEvent};
+use sohi_win::{
+    AppWindow, EventQueue, FrameTimer, PresenceWatch, RemoteWindow, TrayIcon, WinError, WinEvent,
+};
 
 use crate::corner::Corner;
 use crate::head::Head;
@@ -53,6 +55,8 @@ pub struct App {
     cooldown: Duration,
     /// Global hotkeys, unregistered on drop.
     _hotkeys: Hotkeys,
+    /// Lock and display-power notifications, unregistered on drop.
+    _presence: Option<PresenceWatch>,
 }
 
 impl App {
@@ -76,6 +80,9 @@ impl App {
         let tray = TrayIcon::add(window, dpi, sohi_render::tray_icon)?;
         let hotkeys = Hotkeys::register(window, &tray, &options.wake);
         let corner = CornerSettings::from_config(&options.wake);
+        let presence = PresenceWatch::register(window)
+            .inspect_err(|err| log::warn!("lock/display notifications unavailable: {err}"))
+            .ok();
         let mut app = Self {
             head,
             tray,
@@ -87,6 +94,7 @@ impl App {
             corner: Corner::start(window, corner),
             cooldown: corner.cooldown,
             _hotkeys: hotkeys,
+            _presence: presence,
         };
         app.relayout();
         Ok(app)
@@ -102,6 +110,13 @@ impl App {
             WinEvent::Frame => self.head.on_frame(),
             WinEvent::CursorPoll => self.on_cursor_poll(),
             WinEvent::Hotkey { id } => self.on_hotkey(id),
+            WinEvent::Presence(presence) => {
+                log::info!("presence: {presence:?}");
+                if self.corner.on_presence(presence) {
+                    // Nobody is looking: put the head away too.
+                    self.head.input(Input::Retract);
+                }
+            }
             WinEvent::DisplayChanged => {
                 log::info!("display changed");
                 self.relayout();

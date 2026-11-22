@@ -6,15 +6,16 @@ use std::time::{Duration, Instant};
 
 use sohi_core::geometry::RectPx;
 use sohi_core::wake::{
-    CornerSettings, Dwell, Gate, POLL_FAR, POLL_TOLERANCE, in_hot_zone, poll_period,
+    Away, CornerSettings, Dwell, Gate, POLL_FAR, POLL_TOLERANCE, in_hot_zone, poll_period,
 };
-use sohi_win::{AppWindow, CursorPoller};
+use sohi_win::{AppWindow, CursorPoller, Presence};
 
 /// Corner wake detection.
 pub struct Corner {
     poller: CursorPoller,
     dwell: Dwell,
     settings: CornerSettings,
+    away: Away,
 }
 
 impl Corner {
@@ -24,6 +25,7 @@ impl Corner {
             poller: CursorPoller::new(window, POLL_TOLERANCE),
             dwell: Dwell::default(),
             settings,
+            away: Away::default(),
         };
         corner.set_period(Some(POLL_FAR));
         corner
@@ -36,6 +38,10 @@ impl Corner {
     /// presentation is running.
     pub fn on_poll(&mut self, monitor: RectPx, gate: impl FnOnce(Instant) -> Gate) -> bool {
         let now = Instant::now();
+        if self.away.any() {
+            // A tick queued before the pause.
+            return false;
+        }
         let Some(cursor) = sohi_win::cursor_pos() else {
             // Secure desktop or similar: keep the slow rate.
             self.dwell = Dwell::default();
@@ -70,6 +76,31 @@ impl Corner {
                 }
             }
         }
+    }
+
+    /// Pauses polling while the session is locked, the display is off or
+    /// the system is suspending, and resumes at the far rate once none of
+    /// those holds. Returns `true` if polling just paused.
+    pub fn on_presence(&mut self, presence: Presence) -> bool {
+        let was_away = self.away.any();
+        match presence {
+            Presence::Locked(on) => self.away.locked = on,
+            Presence::DisplayOff(on) => self.away.display_off = on,
+            Presence::Suspended(on) => self.away.suspended = on,
+        }
+        let away = self.away.any();
+        if away == was_away {
+            return false;
+        }
+        self.dwell = Dwell::default();
+        if away {
+            log::info!("corner polling paused ({:?})", self.away);
+            self.set_period(None);
+        } else {
+            log::info!("corner polling resumed");
+            self.set_period(Some(POLL_FAR));
+        }
+        away
     }
 
     fn set_period(&self, period: Option<Duration>) {
