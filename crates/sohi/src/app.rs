@@ -58,6 +58,9 @@ impl App {
     ) -> Result<Self, WinError> {
         let head = HeadWindow::create(queue.clone())?;
         let dpi = sohi_win::primary_monitor().map_or(BASE_DPI, |m| m.dpi);
+        if !sohi_win::force_dark_menus() {
+            log::warn!("dark menus unavailable; using the system theme");
+        }
         let tray = TrayIcon::add(window, dpi, sohi_render::tray_icon)?;
         let mut app = Self {
             head,
