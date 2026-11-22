@@ -39,6 +39,8 @@ pub struct Options {
     pub wake: WakeConfig,
     /// `[llm] model`.
     pub llm_model: String,
+    /// The Anthropic fallback model; empty for none.
+    pub llm_fallback_model: String,
     /// `[persona] user_name`.
     pub user_name: String,
 }
@@ -97,6 +99,7 @@ impl App {
             TimerHost::new(window),
             TextSettings {
                 model: options.llm_model.clone(),
+                fallback_model: options.llm_fallback_model.clone(),
                 user_name: options.user_name.clone(),
             },
         );

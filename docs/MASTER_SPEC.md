@@ -79,7 +79,7 @@ plugin/MCP runtime · installer or auto-update · telemetry · draggable widget.
 | Role | Primary (online) | Fallback |
 |---|---|---|
 | STT | Mistral **Voxtral** via `POST https://api.mistral.ai/v1/audio/transcriptions`, model `voxtral-mini-latest` **[VERIFY]** | None in v1 (offline means text input). Windows offline speech recognition is a possible later phase. |
-| LLM | Mistral chat completions, model `mistral-small-latest`, streaming SSE, function calling **[VERIFY tool-call schema]** | Anthropic Messages API (model set in config, e.g. a Claude Haiku/Sonnet tier), and offline **Ollama** at `http://127.0.0.1:11434` (`/api/tags`, `/api/chat` NDJSON) |
+| LLM | Mistral chat completions, model `mistral-small-latest`, streaming SSE, function calling **[VERIFY tool-call schema]** | Anthropic Messages API (model set in config, e.g. a Claude Haiku/Sonnet tier). Used when Mistral fails before writing any text and `anthropic_model` is set; a reply already under way is never restarted on another provider, and offline **Ollama** at `http://127.0.0.1:11434` (`/api/tags`, `/api/chat` NDJSON) |
 | TTS | `TtsProvider` trait. Default: Mistral Voxtral TTS **if available on the account [VERIFY endpoint, model, streaming format]**, otherwise any streaming cloud TTS set in config | OneCore offline voices |
 
 ### 2.4 Release profile
@@ -635,6 +635,8 @@ Every phase also requires:
   `fn user_message(&self) -> &'static str` (or a short `String`) for the bubble, and full detail for the log.
 - `ProviderError` classifies failures as: `Offline` (DNS/connect/TLS/timeout), `Auth`, `RateLimited`, `Server`, `BadResponse`, `Cancelled`.
   Only `Offline` affects connectivity.
+> SPEC CHANGE (2026-11-22): `ProviderError` gains `Refused`: the Anthropic model stopped with `stop_reason: "refusal"`
+> before writing any text. It is not retried and does not affect connectivity. A refusal after some text keeps that text.
 - Retries: at most **1** automatic retry, and only for idempotent or safe-to-repeat requests (STT upload, probe). Never retry
   a tool execution.
 - Timeouts on everything: probe 2 s · STT 10 s · LLM first byte 8 s, inter-chunk 15 s · TTS first byte 5 s · tool 15 s.
@@ -836,7 +838,10 @@ minimum granularity, not a cap.
 1. Voxtral transcription endpoint path, model ID (`voxtral-mini-latest`?), multipart field names, supported audio formats and size limits.
 2. Mistral TTS availability, endpoint, voice IDs, streaming support and output formats (PCM preferred). If unavailable, pick and document an alternative cloud TTS.
 3. Mistral function-calling schema and streaming tool-call delta format.
-4. Anthropic Messages API current model IDs and streaming event types for tool use.
+4. Anthropic Messages API current model IDs and streaming event types for tool use. *(Text streaming verified 2026-11-22:
+   `POST /v1/messages`, `x-api-key`, `anthropic-version: 2026-10-21` (no `temperature`/`top_p`/`top_k` on that version),
+   text in `content_block_delta`/`text_delta`, end at `message_stop`, mid-stream `error` events, `ping`. Current cheap tier:
+   `claude-haiku-5-5`. Tool-use events still to verify in P7.)*
 5. Ollama `/api/chat` tool-calling support for the chosen offline model.
 6. Maintenance status of the `webrtc-vad` (or `fvad`) crate and whether it builds under MSVC.
 7. `NotifyNetworkConnectivityHintChange` behaviour on Win11 builds in use.

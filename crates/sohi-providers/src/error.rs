@@ -23,6 +23,10 @@ pub enum ProviderError {
     /// Any other unexpected status, or a body Sohi could not understand.
     #[error("unexpected response: {0}")]
     BadResponse(String),
+    /// The model declined to answer and wrote nothing (Anthropic's
+    /// `refusal` stop reason).
+    #[error("the model declined to answer")]
+    Refused,
     /// The turn was cancelled.
     #[error("cancelled")]
     Cancelled,

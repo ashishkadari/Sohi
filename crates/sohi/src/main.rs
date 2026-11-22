@@ -119,6 +119,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         perf: args.perf.is_some(),
         wake: config.wake.clone(),
         llm_model: config.llm.model.clone(),
+        llm_fallback_model: config.llm.anthropic_fallback().to_owned(),
         user_name: config.persona.user_name.clone(),
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;

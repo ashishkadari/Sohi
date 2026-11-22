@@ -34,6 +34,8 @@ const HISTORY_LIMIT: usize = 24;
 pub struct TextSettings {
     /// `[llm] model`.
     pub model: String,
+    /// The Anthropic fallback model; empty for none.
+    pub fallback_model: String,
     /// `[persona] user_name`.
     pub user_name: String,
 }
@@ -254,6 +256,7 @@ impl TextMode {
         let request = Request::Chat(ChatTurn {
             turn,
             model: self.settings.model.clone(),
+            fallback_model: self.settings.fallback_model.clone(),
             system: text_system_prompt(&self.settings.user_name, &sohi_win::local_time()),
             messages: self.history.clone(),
         });

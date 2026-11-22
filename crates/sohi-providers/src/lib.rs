@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod anthropic;
 mod error;
 pub mod http;
 pub mod mistral;
@@ -11,6 +12,7 @@ mod testserver;
 
 use sohi_core::chat::Message;
 
+pub use anthropic::Anthropic;
 pub use error::ProviderError;
 pub use http::{Auth, HttpClient};
 pub use mistral::Mistral;

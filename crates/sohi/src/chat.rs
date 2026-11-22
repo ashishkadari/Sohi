@@ -7,8 +7,10 @@
 use std::time::Instant;
 
 use sohi_core::chat::Message;
-use sohi_core::secret::KeyName;
-use sohi_providers::{ChatRequest, HttpClient, Mistral, ProviderError, mistral};
+use sohi_core::secret::{KeyName, Secret};
+use sohi_providers::{
+    Anthropic, ChatRequest, HttpClient, Mistral, ProviderError, anthropic, mistral,
+};
 use tokio::sync::mpsc::Receiver;
 
 use crate::runtime::UiLink;
@@ -34,8 +36,10 @@ pub enum Request {
 pub struct ChatTurn {
     /// The interaction's turn id, echoed in every update.
     pub turn: u64,
-    /// The model name.
+    /// The Mistral model.
     pub model: String,
+    /// The Anthropic model to fall back to; empty for no fallback.
+    pub fallback_model: String,
     /// The system prompt.
     pub system: String,
     /// The conversation, ending with the new prompt.
@@ -74,20 +78,21 @@ trait TurnRunner {
     async fn run(&mut self, turn: ChatTurn, ui: &UiLink<Update>);
 }
 
-/// Turns against Mistral; the client is created on the first turn.
-struct MistralRunner {
-    client: Option<Mistral>,
+/// Turns against the online providers; the HTTP client is created on the
+/// first turn and shared after that, so connections are pooled.
+struct ProviderRunner {
+    http: Option<HttpClient>,
 }
 
-impl TurnRunner for MistralRunner {
+impl TurnRunner for ProviderRunner {
     async fn run(&mut self, turn: ChatTurn, ui: &UiLink<Update>) {
-        run_turn(&mut self.client, turn, ui).await;
+        run_turn(&mut self.http, turn, ui).await;
     }
 }
 
 /// Serves requests until the UI drops its handle.
 pub async fn serve(requests: Receiver<Request>, ui: UiLink<Update>) {
-    serve_with(requests, ui, MistralRunner { client: None }).await;
+    serve_with(requests, ui, ProviderRunner { http: None }).await;
 }
 
 async fn serve_with(
@@ -164,9 +169,20 @@ async fn run_cancellable(
     }
 }
 
-async fn run_turn(client: &mut Option<Mistral>, turn: ChatTurn, ui: &UiLink<Update>) {
+async fn run_turn(http: &mut Option<HttpClient>, turn: ChatTurn, ui: &UiLink<Update>) {
     let id = turn.turn;
-    match chat(client, &turn, ui).await {
+    let http = match http {
+        Some(http) => http.clone(),
+        None => match HttpClient::new() {
+            Ok(client) => http.insert(client).clone(),
+            Err(error) => {
+                log::warn!("turn {id} failed: {error}");
+                ui.send(Update::Failed { turn: id, error });
+                return;
+            }
+        },
+    };
+    match chat(&http, &turn, ui).await {
         Ok(reply) => {
             ui.send(Update::Done { turn: id, reply });
         }
@@ -177,58 +193,125 @@ async fn run_turn(client: &mut Option<Mistral>, turn: ChatTurn, ui: &UiLink<Upda
     }
 }
 
+/// Asks Mistral, then the fallback provider if Mistral failed before
+/// writing anything (spec §2.3). A reply already under way is never
+/// restarted elsewhere: the user would see it twice.
 async fn chat(
-    client: &mut Option<Mistral>,
+    http: &HttpClient,
     turn: &ChatTurn,
     ui: &UiLink<Update>,
 ) -> Result<String, ProviderError> {
-    let key = match sohi_win::read_key(KeyName::Mistral.target()) {
-        Ok(Some(key)) => key,
-        Ok(None) => return Err(ProviderError::MissingKey(KeyName::Mistral.as_str())),
-        Err(err) => {
-            log::warn!("cannot read the Mistral key: {err}");
-            return Err(ProviderError::MissingKey(KeyName::Mistral.as_str()));
+    let mut reply = String::new();
+    let primary = stream(Provider::Mistral, http, &turn.model, turn, ui, &mut reply).await;
+    let error = match primary {
+        Ok(()) => return Ok(reply),
+        Err(error) => error,
+    };
+    if !reply.is_empty() || turn.fallback_model.is_empty() || error == ProviderError::Cancelled {
+        return Err(error);
+    }
+    log::info!(
+        "turn {}: Mistral failed ({error}); trying Anthropic",
+        turn.turn
+    );
+    match stream(
+        Provider::Anthropic,
+        http,
+        &turn.fallback_model,
+        turn,
+        ui,
+        &mut reply,
+    )
+    .await
+    {
+        Ok(()) => Ok(reply),
+        // A fallback that was never set up says nothing new: report why
+        // the primary failed.
+        Err(ProviderError::MissingKey(_)) => Err(error),
+        Err(fallback) => Err(fallback),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Provider {
+    Mistral,
+    Anthropic,
+}
+
+impl Provider {
+    fn key(self) -> KeyName {
+        match self {
+            Self::Mistral => KeyName::Mistral,
+            Self::Anthropic => KeyName::Anthropic,
         }
-    };
-    let client = match client {
-        Some(client) => client,
-        None => client.insert(Mistral::new(HttpClient::new()?, mistral::BASE_URL)),
-    };
+    }
+}
+
+/// Streams one attempt into `reply`, forwarding each piece to the UI.
+async fn stream(
+    provider: Provider,
+    http: &HttpClient,
+    model: &str,
+    turn: &ChatTurn,
+    ui: &UiLink<Update>,
+    reply: &mut String,
+) -> Result<(), ProviderError> {
+    let key = read_key(provider.key())?;
     let request = ChatRequest {
-        model: &turn.model,
+        model,
         system: &turn.system,
         messages: &turn.messages,
     };
     let started = Instant::now();
-    let mut reply = String::new();
     log::info!(
-        "turn {} started ({} messages)",
+        "turn {} started on {provider:?} ({} messages)",
         turn.turn,
         turn.messages.len()
     );
-    client
-        .chat_stream(&key, &request, &mut |delta| {
-            if reply.is_empty() {
-                log::info!(
-                    "turn {} first token after {} ms",
-                    turn.turn,
-                    started.elapsed().as_millis()
-                );
-            }
-            reply.push_str(delta);
-            ui.send(Update::Delta {
-                turn: turn.turn,
-                text: delta.to_owned(),
-            });
-        })
-        .await?;
+    let mut on_delta = |delta: &str| {
+        if reply.is_empty() {
+            log::info!(
+                "turn {} first token after {} ms",
+                turn.turn,
+                started.elapsed().as_millis()
+            );
+        }
+        reply.push_str(delta);
+        ui.send(Update::Delta {
+            turn: turn.turn,
+            text: delta.to_owned(),
+        });
+    };
+    match provider {
+        Provider::Mistral => {
+            Mistral::new(http.clone(), mistral::BASE_URL)
+                .chat_stream(&key, &request, &mut on_delta)
+                .await?;
+        }
+        Provider::Anthropic => {
+            Anthropic::new(http.clone(), anthropic::BASE_URL)
+                .chat_stream(&key, &request, &mut on_delta)
+                .await?;
+        }
+    }
     log::info!(
         "turn {} done in {} ms ({} chars)",
         turn.turn,
         started.elapsed().as_millis(),
         reply.chars().count()
     );
-    Ok(reply)
+    Ok(())
+}
+
+fn read_key(name: KeyName) -> Result<Secret, ProviderError> {
+    match sohi_win::read_key(name.target()) {
+        Ok(Some(key)) => Ok(key),
+        Ok(None) => Err(ProviderError::MissingKey(name.as_str())),
+        Err(err) => {
+            log::warn!("cannot read the {} key: {err}", name.as_str());
+            Err(ProviderError::MissingKey(name.as_str()))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -270,6 +353,7 @@ mod tests {
         Request::Chat(ChatTurn {
             turn: id,
             model: String::new(),
+            fallback_model: String::new(),
             system: String::new(),
             messages: Vec::new(),
         })
