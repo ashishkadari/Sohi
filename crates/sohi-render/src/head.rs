@@ -1,14 +1,14 @@
 //! The head: an original "hooded ghost" netrunner bust inside a HUD frame
 //! (spec §1.1, §4.1, §4.5).
 //!
-//! Everything is laid out in DIPs on the 112 × 84 head window and scaled
-//! to the window's pixel size. The hood, face and shadow never change
-//! within a tone, so they are drawn once into a cached layer; each frame
+//! Everything is laid out on the 112 × 84 `HEAD_LAYOUT` grid and scaled
+//! to the window's pixel size; "DIPs" below mean units of that grid. The
+//! hood, face and shadow never change within a tone, so they are drawn once into a cached layer; each frame
 //! copies that layer and adds the frame, eyes and collar line on top.
 
 use std::time::Duration;
 
-use sohi_core::geometry::{HEAD_WINDOW_DIP, RectPx};
+use sohi_core::geometry::{HEAD_LAYOUT, RectPx};
 use sohi_core::visual::{ERROR_FLASH, VisualState};
 use tiny_skia::{
     Color, FillRule, LineCap, Paint, Path, PathBuilder, Pixmap, Rect, Stroke, StrokeDash, Transform,
@@ -132,7 +132,7 @@ impl HeadRenderer {
     #[must_use]
     pub fn new(width: u32, height: u32) -> Option<Self> {
         #[allow(clippy::cast_precision_loss)] // widths are far below 2^24
-        let scale = width as f32 / HEAD_WINDOW_DIP.0 as f32;
+        let scale = width as f32 / HEAD_LAYOUT.0 as f32;
         Some(Self {
             scale,
             pixmap: Pixmap::new(width, height)?,

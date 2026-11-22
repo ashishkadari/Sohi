@@ -7,8 +7,18 @@
 /// Effective DPI at 100% scaling.
 pub const BASE_DPI: u32 = 96;
 
-/// Head window size in DIPs (frame, head, visor and shadow all fit inside).
-pub const HEAD_WINDOW_DIP: (u32, u32) = (112, 84);
+/// The grid the head is drawn on (frame, head, visor and shadow all fit
+/// inside). The renderer scales it to the window.
+pub const HEAD_LAYOUT: (u32, u32) = (112, 84);
+
+/// How large the head is drawn, in percent of [`HEAD_LAYOUT`] DIPs.
+pub const HEAD_SCALE_PERCENT: u32 = 125;
+
+/// Head window size in DIPs: [`HEAD_LAYOUT`] at [`HEAD_SCALE_PERCENT`].
+pub const HEAD_WINDOW_DIP: (u32, u32) = (
+    HEAD_LAYOUT.0 * HEAD_SCALE_PERCENT / 100,
+    HEAD_LAYOUT.1 * HEAD_SCALE_PERCENT / 100,
+);
 
 /// Gap between the head window and the work area's top-right corner, in DIPs.
 pub const HEAD_MARGIN_DIP: u32 = 12;
@@ -98,10 +108,10 @@ mod tests {
         assert_eq!(
             r,
             RectPx {
-                left: 1920 - 12 - 112,
+                left: 1920 - 12 - 140,
                 top: 12,
                 right: 1920 - 12,
-                bottom: 12 + 84,
+                bottom: 12 + 105,
             }
         );
     }
@@ -109,7 +119,7 @@ mod tests {
     #[test]
     fn head_scales_with_dpi() {
         let r = head_window_rect(FHD, 192);
-        assert_eq!((r.width(), r.height()), (224, 168));
+        assert_eq!((r.width(), r.height()), (280, 210));
         assert_eq!((r.right, r.top), (1920 - 24, 24));
     }
 

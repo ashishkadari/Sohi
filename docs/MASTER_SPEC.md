@@ -62,7 +62,7 @@ plugin/MCP runtime · installer or auto-update · telemetry · draggable widget.
 | Concern | Choice | Justification |
 |---|---|---|
 | Windowing | **Raw Win32 via `windows` crate** (no winit) | We need `WS_EX_LAYERED` + `UpdateLayeredWindow` per-pixel alpha, `WS_EX_NOACTIVATE`, `MA_NOACTIVATE`, and exact control of the message loop (`MsgWaitForMultipleObjectsEx`). winit hides or fights these. Raw Win32 adds about 0 KB of runtime overhead. |
-| Head rendering | **`tiny-skia`** (CPU, `simd`) → premultiplied BGRA DIB → `UpdateLayeredWindow` | The surface is about 180×130 px, so CPU rasterization takes under 0.5 ms. No GPU device, swapchain or shader compiler, and no GPU memory while idle. |
+| Head rendering | **`tiny-skia`** (CPU, `simd`) → premultiplied BGRA DIB → `UpdateLayeredWindow` | The surface is about 210×160 px at 150 % scaling, so CPU rasterization takes under 0.5 ms. No GPU device, swapchain or shader compiler, and no GPU memory while idle. |
 | Text pill UI | **Native Win32 `EDIT` controls** in a separate popup window, DWM rounded corners | Gives IME, caret, selection, clipboard, accessibility and Unicode for free. A hand-written text editor would be thousands of lines and a source of bugs. |
 | Audio I/O | **WASAPI directly via `windows`** (event-driven shared mode, `AUTOCONVERTPCM`) | The OS resamples to 16 kHz mono i16 for capture at no cost to us, so we need neither `cpal` nor a resampler crate. |
 | VAD | **WebRTC VAD** (`webrtc-vad`/libfvad binding, compiled with `cc`) **[VERIFY crate maintenance]** | About 50 KB, deterministic, no ML runtime, runs on 30 ms frames. |
@@ -222,6 +222,11 @@ pub fn step(s: &State, e: Event) -> (State, SmallVec<[Effect; 4]>);  // pure, to
 - The head window sits at the **work-area** top-right (`rcWork`), so a top-docked taskbar is respected.
 - The hot zone uses the **monitor** corner (`rcMonitor`). That is where a flicked cursor pins, so it is easy to hit.
 - Recompute everything on `WM_DPICHANGED`, `WM_DISPLAYCHANGE` and `WM_SETTINGCHANGE(SPI_SETWORKAREA)`, and when the primary monitor changes.
+
+> SPEC CHANGE (2026-11-22): the head is drawn at 125 %. The diagram's head sizes are the layout grid
+> (`HEAD_LAYOUT` = 112 × 84). The window is that grid scaled by `HEAD_SCALE_PERCENT` = 125, so it is
+> 140 × 105 DIP. The 12 DIP margin, the hot zone and the pill size are not scaled. The pill sits 8 DIP below
+> the frame as drawn.
 
 ### 4.2 Head window flags
 | Flag / API | Purpose |
