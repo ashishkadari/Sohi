@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod geometry;
+pub mod hotkey;
 pub mod motion;
 pub mod visibility;
 pub mod visual;

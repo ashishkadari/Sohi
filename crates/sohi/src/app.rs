@@ -4,16 +4,17 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use sohi_core::config::ReducedMotion;
+use sohi_core::config::{ReducedMotion, WakeConfig};
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::motion::LAUNCH_PEEK_HOLD;
-use sohi_core::visibility::Input;
+use sohi_core::visibility::{Input, Phase};
 use sohi_core::wake::CornerSettings;
 use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{AppWindow, EventQueue, FrameTimer, RemoteWindow, TrayIcon, WinError, WinEvent};
 
 use crate::corner::Corner;
 use crate::head::Head;
+use crate::hotkeys::{self, Hotkeys};
 use crate::tray_menu::{self, MenuCommand, MenuState};
 
 /// How long a wake keeps the head up with nothing happening. Replaced by
@@ -34,8 +35,8 @@ pub struct Options {
     pub reduced_motion: ReducedMotion,
     /// `--perf`: report the first visible frame and slide frame costs.
     pub perf: bool,
-    /// Corner wake tunables from `[wake]`.
-    pub corner: CornerSettings,
+    /// `[wake]`: hotkeys and corner tunables.
+    pub wake: WakeConfig,
 }
 
 /// Everything the UI thread owns.
@@ -54,6 +55,8 @@ pub struct App {
     corner: Corner,
     /// No corner wake this soon after a retract.
     cooldown: Duration,
+    /// Global hotkeys, unregistered on drop.
+    _hotkeys: Hotkeys,
 }
 
 impl App {
@@ -75,6 +78,8 @@ impl App {
             log::warn!("dark menus unavailable; using the system theme");
         }
         let tray = TrayIcon::add(window, dpi, sohi_render::tray_icon)?;
+        let hotkeys = Hotkeys::register(window, &tray, &options.wake);
+        let corner = CornerSettings::from_config(&options.wake);
         let mut app = Self {
             head,
             tray,
@@ -83,8 +88,9 @@ impl App {
             menu_state: MenuState::default(),
             dpi,
             monitor: RectPx::default(),
-            corner: Corner::start(window, options.corner),
-            cooldown: options.corner.cooldown,
+            corner: Corner::start(window, corner),
+            cooldown: corner.cooldown,
+            _hotkeys: hotkeys,
         };
         app.relayout();
         Ok(app)
@@ -99,6 +105,7 @@ impl App {
             }
             WinEvent::Frame => self.head.on_frame(),
             WinEvent::CursorPoll => self.on_cursor_poll(),
+            WinEvent::Hotkey { id } => self.on_hotkey(id),
             WinEvent::DisplayChanged => {
                 log::info!("display changed");
                 self.relayout();
@@ -142,6 +149,28 @@ impl App {
         {
             log::info!("wake: corner");
             self.peek(WAKE_HOLD);
+        }
+    }
+
+    /// The voice hotkey toggles: it wakes a parked (or retracting) head and
+    /// retracts a shown one. Until text mode exists the text hotkey only
+    /// wakes. Neither is affected by full-screen suppression.
+    fn on_hotkey(&mut self, id: u16) {
+        let shown = matches!(self.head.phase(), Phase::Revealing | Phase::Shown);
+        match id {
+            hotkeys::VOICE if shown => {
+                log::info!("hotkey: voice (retract)");
+                self.head.input(Input::Retract);
+            }
+            hotkeys::VOICE => {
+                log::info!("wake: hotkey (voice)");
+                self.peek(WAKE_HOLD);
+            }
+            hotkeys::TEXT => {
+                log::info!("wake: hotkey (text; text mode is not available yet)");
+                self.peek(WAKE_HOLD);
+            }
+            other => log::warn!("unknown hotkey id {other}"),
         }
     }
 

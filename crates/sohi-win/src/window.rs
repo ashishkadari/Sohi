@@ -10,7 +10,8 @@ use std::ffi::c_void;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     PostMessageW, PostQuitMessage, SPI_SETWORKAREA, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE,
-    WM_DPICHANGED, WM_SETTINGCHANGE, WM_TIMER, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    WM_DPICHANGED, WM_HOTKEY, WM_SETTINGCHANGE, WM_TIMER, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_POPUP,
 };
 
 use crate::cursor::CURSOR_TIMER_ID;
@@ -92,6 +93,12 @@ impl WndHandler for AppHandler {
         match msg {
             WM_TIMER if wparam.0 == CURSOR_TIMER_ID => {
                 self.queue.push(WinEvent::CursorPoll);
+                Some(LRESULT(0))
+            }
+            WM_HOTKEY => {
+                if let Ok(id) = u16::try_from(wparam.0) {
+                    self.queue.push(WinEvent::Hotkey { id });
+                }
                 Some(LRESULT(0))
             }
             TRAY_CALLBACK => {
@@ -178,6 +185,7 @@ mod tests {
         send(&window, 0xC123, 0, 0);
         send(&window, WM_TIMER, CURSOR_TIMER_ID, 0);
         send(&window, WM_TIMER, 1, 0); // someone else's timer: ignored
+        send(&window, WM_HOTKEY, 7, 0);
         let events: Vec<_> = std::iter::from_fn(|| queue.pop()).collect();
         assert_eq!(
             events,
@@ -187,6 +195,7 @@ mod tests {
                 WinEvent::DisplayChanged,
                 WinEvent::WakeRequested,
                 WinEvent::CursorPoll,
+                WinEvent::Hotkey { id: 7 },
             ]
         );
     }

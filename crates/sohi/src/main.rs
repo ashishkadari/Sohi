@@ -8,6 +8,7 @@ mod config_file;
 mod corner;
 mod dev;
 mod head;
+mod hotkeys;
 mod logger;
 mod perf;
 mod tray_menu;
@@ -103,7 +104,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     let options = app::Options {
         reduced_motion: config.ui.reduced_motion,
         perf: args.perf.is_some(),
-        corner: sohi_core::wake::CornerSettings::from_config(&config.wake),
+        wake: config.wake.clone(),
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {

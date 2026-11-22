@@ -19,6 +19,11 @@ pub enum WinEvent {
     Frame,
     /// The cursor poll timer ticked: time to sample the cursor (§4.7).
     CursorPoll,
+    /// A registered global hotkey was pressed.
+    Hotkey {
+        /// The id it was registered under.
+        id: u16,
+    },
     /// Resolution, scaling, work area or primary monitor may have changed;
     /// placement must be recomputed.
     DisplayChanged,

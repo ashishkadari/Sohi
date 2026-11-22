@@ -7,8 +7,9 @@
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::HiDpi::GetSystemMetricsForDpi;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION,
-    NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_RESPECT_QUIET_TIME, NIIF_WARNING,
+    NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4, NOTIFYICONDATAW,
+    Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIcon, CreatePopupMenu, DestroyIcon, DestroyMenu, HICON, MENU_ITEM_FLAGS,
@@ -107,6 +108,25 @@ impl TrayIcon {
         result
     }
 
+    /// Shows a warning balloon (a toast on Windows 11) from the icon.
+    /// Windows holds it back while the user is in focus assist.
+    ///
+    /// # Errors
+    /// Returns [`WinError`] if the shell rejects the notification.
+    pub fn warn(&self, title: &str, text: &str) -> Result<(), WinError> {
+        let mut data = self.data();
+        data.uFlags |= NIF_INFO;
+        data.dwInfoFlags = NIIF_WARNING | NIIF_RESPECT_QUIET_TIME;
+        copy_truncated(&mut data.szInfoTitle, title);
+        copy_truncated(&mut data.szInfo, text);
+        // SAFETY: `data` is a fully initialized NOTIFYICONDATAW.
+        if unsafe { Shell_NotifyIconW(NIM_MODIFY, &raw const data) }.as_bool() {
+            Ok(())
+        } else {
+            Err(WinError::last("Shell_NotifyIconW(NIF_INFO)"))
+        }
+    }
+
     /// Shows `items` as a popup menu at screen point (`x`, `y`) and returns
     /// the chosen item's id, or `None` if the menu was dismissed.
     #[must_use]
@@ -146,9 +166,7 @@ impl TrayIcon {
             hIcon: self.icon,
             ..Default::default()
         };
-        for (dst, src) in data.szTip.iter_mut().zip(TOOLTIP.encode_utf16()) {
-            *dst = src;
-        }
+        copy_truncated(&mut data.szTip, TOOLTIP);
         data
     }
 
@@ -172,6 +190,20 @@ impl Drop for TrayIcon {
         // SAFETY: the icon was created by `create_icon` and the shell no
         // longer references it after NIM_DELETE.
         let _ = unsafe { DestroyIcon(self.icon) };
+    }
+}
+
+/// Copies `text` into a fixed UTF-16 buffer, truncated so the last
+/// element stays a terminating NUL.
+fn copy_truncated(dst: &mut [u16], text: &str) {
+    let room = dst.len().saturating_sub(1);
+    let mut len = 0;
+    for (slot, unit) in dst.iter_mut().take(room).zip(text.encode_utf16()) {
+        *slot = unit;
+        len += 1;
+    }
+    for slot in &mut dst[len..] {
+        *slot = 0;
     }
 }
 
@@ -255,6 +287,15 @@ fn icon_bits(rgba: &[u8], size: u32) -> (Vec<u8>, Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_is_truncated_and_terminated() {
+        let mut buf = [0xFFFF_u16; 4];
+        copy_truncated(&mut buf, "Sohi!");
+        assert_eq!(buf, [u16::from(b'S'), u16::from(b'o'), u16::from(b'h'), 0]);
+        copy_truncated(&mut buf, "a");
+        assert_eq!(buf, [u16::from(b'a'), 0, 0, 0]);
+    }
 
     #[test]
     fn icon_bits_swizzle_and_mask_transparent_pixels() {
