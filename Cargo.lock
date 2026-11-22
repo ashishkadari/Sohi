@@ -767,6 +767,7 @@ version = "0.0.0"
 dependencies = [
  "log",
  "sohi-core",
+ "sohi-providers",
  "sohi-render",
  "sohi-win",
  "tokio",

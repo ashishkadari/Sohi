@@ -8,6 +8,7 @@ pub mod geometry;
 pub mod hotkey;
 pub mod interaction;
 pub mod motion;
+pub mod persona;
 pub mod pill;
 pub mod secret;
 pub mod visibility;

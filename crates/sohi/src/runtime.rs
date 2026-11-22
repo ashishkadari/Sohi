@@ -13,11 +13,6 @@
 //!
 //! [`WinEvent::Runtime`]: sohi_win::WinEvent::Runtime
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the text pill starts the runtime (P3 task 7)")
-)]
-
 use std::future::Future;
 use std::sync::mpsc;
 use std::thread::JoinHandle;

@@ -4,6 +4,8 @@
 //! Every `unsafe` block needs a `// SAFETY:` comment, and the crate exposes
 //! safe RAII wrappers to the rest of the workspace.
 
+mod apptimer;
+mod clock;
 mod console;
 mod credential;
 mod cursor;
@@ -28,6 +30,8 @@ mod timer;
 mod tray;
 mod window;
 
+pub use apptimer::{AppTimer, TimerHost};
+pub use clock::local_time;
 pub use console::Prompt;
 pub use credential::{delete_key, read_key, write_key};
 pub use cursor::{CursorPoller, cursor_pos, mouse_button_down};

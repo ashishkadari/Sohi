@@ -98,6 +98,10 @@ impl WndHandler for AppHandler {
                 self.queue.push(WinEvent::CursorPoll);
                 Some(LRESULT(0))
             }
+            WM_TIMER => {
+                self.queue.push(WinEvent::Timer { id: wparam.0 });
+                Some(LRESULT(0))
+            }
             WM_WTSSESSION_CHANGE => {
                 if let Some(p) = session_change(wparam) {
                     self.queue.push(WinEvent::Presence(p));
@@ -219,7 +223,7 @@ mod tests {
         );
         send(&window, 0xC123, 0, 0);
         send(&window, WM_TIMER, CURSOR_TIMER_ID, 0);
-        send(&window, WM_TIMER, 1, 0); // someone else's timer: ignored
+        send(&window, WM_TIMER, 1, 0); // an app timer
         send(&window, WM_HOTKEY, 7, 0);
         send(&window, WM_WTSSESSION_CHANGE, 7, 0); // WTS_SESSION_LOCK
         send(&window, WM_POWERBROADCAST, 18, 0); // PBT_APMRESUMEAUTOMATIC
@@ -233,6 +237,7 @@ mod tests {
                 WinEvent::DisplayChanged,
                 WinEvent::WakeRequested,
                 WinEvent::CursorPoll,
+                WinEvent::Timer { id: 1 },
                 WinEvent::Hotkey { id: 7 },
                 WinEvent::Presence(Presence::Locked(true)),
                 WinEvent::Presence(Presence::Suspended(false)),

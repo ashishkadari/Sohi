@@ -64,6 +64,11 @@ pub enum WinEvent {
     PillRecall,
     /// The pill gained (`true`) or lost (`false`) keyboard focus.
     PillFocus(bool),
+    /// An app timer started with [`TimerHost`](crate::TimerHost) fired.
+    Timer {
+        /// Its id.
+        id: usize,
+    },
 }
 
 /// Shared, single-threaded FIFO of [`WinEvent`]s.

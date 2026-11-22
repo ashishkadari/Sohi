@@ -13,6 +13,7 @@ publish = false
 # `{ workspace = true }`. Internal crates are added here when first used.
 [workspace.dependencies]
 sohi-core = { path = "crates/sohi-core" }
+sohi-providers = { path = "crates/sohi-providers" }
 sohi-render = { path = "crates/sohi-render" }
 sohi-win = { path = "crates/sohi-win" }
 

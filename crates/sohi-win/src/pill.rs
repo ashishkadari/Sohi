@@ -195,6 +195,12 @@ impl PillWindow {
         }
     }
 
+    /// Whether the input holds any text.
+    #[must_use]
+    pub fn has_input(&self) -> bool {
+        window_text_len(self.input) > 0
+    }
+
     /// Returns the typed text and clears the input.
     #[must_use]
     pub fn take_input(&self) -> String {

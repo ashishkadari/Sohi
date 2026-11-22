@@ -4,6 +4,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod chat;
 mod config_file;
 mod corner;
 mod dev;
@@ -13,6 +14,7 @@ mod logger;
 mod perf;
 mod runtime;
 mod set_key;
+mod text_mode;
 mod tray_menu;
 
 use std::process::ExitCode;
@@ -116,6 +118,8 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         reduced_motion: config.ui.reduced_motion,
         perf: args.perf.is_some(),
         wake: config.wake.clone(),
+        llm_model: config.llm.model.clone(),
+        user_name: config.persona.user_name.clone(),
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {
