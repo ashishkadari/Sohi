@@ -1,0 +1,11 @@
+[package]
+name = "sohi-tools"
+description = "Tool registry, JSON schemas, policy engine and local action executors."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

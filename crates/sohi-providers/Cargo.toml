@@ -1,0 +1,11 @@
+[package]
+name = "sohi-providers"
+description = "STT, LLM and TTS provider traits and their Mistral, Anthropic, Ollama and OneCore implementations."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

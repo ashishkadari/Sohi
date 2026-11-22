@@ -1,0 +1,11 @@
+[package]
+name = "sohi-win"
+description = "All Win32/WinRT FFI for Sohi: windows, message loop, audio, tray, hotkeys and credentials."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

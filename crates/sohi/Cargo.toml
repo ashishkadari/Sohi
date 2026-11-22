@@ -1,0 +1,11 @@
+[package]
+name = "sohi"
+description = "Sohi: an ultra-lightweight desktop voice assistant for Windows 11."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
