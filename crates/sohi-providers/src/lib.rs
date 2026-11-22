@@ -4,6 +4,7 @@
 
 mod error;
 pub mod http;
+pub mod sse;
 #[cfg(test)]
 mod testserver;
 
