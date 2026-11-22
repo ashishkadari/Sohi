@@ -125,6 +125,7 @@ version = "0.0.0"
 name = "sohi-win"
 version = "0.0.0"
 dependencies = [
+ "sohi-core",
  "thiserror",
  "windows",
 ]

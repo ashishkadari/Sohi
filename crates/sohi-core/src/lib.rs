@@ -3,5 +3,6 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+pub mod geometry;
 
 pub use config::{Config, ConfigError};

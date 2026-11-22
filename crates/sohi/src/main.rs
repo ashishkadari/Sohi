@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 #![windows_subsystem = "windows"]
 
+mod app;
 mod config_file;
 mod logger;
 mod perf;
@@ -10,7 +11,7 @@ mod perf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use sohi_win::{AppWindow, EventQueue, SingleInstance, WinEvent};
+use sohi_win::{AppWindow, EventQueue, SingleInstance};
 
 /// Named mutex that marks the running instance (spec §5.8).
 const INSTANCE_MUTEX: &str = r"Local\Sohi.SingleInstance";
@@ -82,15 +83,14 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
 
     let queue = EventQueue::new();
     let window = AppWindow::create(APP_WINDOW_CLASS, wake_message, queue.clone())?;
+    let mut app = app::App::new(&queue)?;
 
     // Armed: every startup step is done (spec §5.8 step 4).
     let _armed_event = match args.perf {
         Some(idle) => Some(perf::on_armed(window.remote(), idle)?),
         None => None,
     };
-    let code = sohi_win::run_message_loop(&queue, |event| match event {
-        WinEvent::WakeRequested => log::info!("wake requested"),
-    });
+    let code = sohi_win::run_message_loop(&queue, |event| app.handle(event));
     log::info!("exiting with code {code}");
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
 }

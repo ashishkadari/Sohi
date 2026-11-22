@@ -15,6 +15,17 @@ use std::rc::Rc;
 pub enum WinEvent {
     /// Another launch asked this instance to wake.
     WakeRequested,
+    /// Left click released on the head.
+    HeadClicked,
+    /// Right click released on the head, at screen coordinates.
+    HeadContextMenu {
+        /// Screen x.
+        x: i32,
+        /// Screen y.
+        y: i32,
+    },
+    /// The pointer entered (`true`) or left (`false`) the head's opaque pixels.
+    HeadHover(bool),
 }
 
 /// Shared, single-threaded FIFO of [`WinEvent`]s.
