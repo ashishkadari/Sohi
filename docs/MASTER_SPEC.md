@@ -651,6 +651,8 @@ Every phase also requires:
   UI → runtime: `tokio::sync::mpsc::Sender::try_send` (bounded 64). If it is full, drop non-critical events and log.
 - **Audio threads are real-time:** no allocation, no locks, no syscalls besides WASAPI, no logging. Communicate only through
   `rtrb` SPSC rings with fixed capacity (2 s). On overflow, drop the oldest data and increment an atomic counter that the runtime logs.
+  > SPEC CHANGE (2026-11-22): on overflow the capture ring drops the *newest* samples (what does not fit). The writer cannot
+  > discard the reader's oldest data without a lock; a reader 2 s behind has already broken the turn either way.
 - **Exactly one active Turn.** Starting a new turn cancels the previous one first and waits for its cleanup (≤ 30 ms).
 - **No busy-waiting and no `sleep` polling.** Timers exist only while their state requires them, and every timer has an owner that cancels it on state exit.
 - No `static mut`. Global state is limited to `OnceLock` for immutable config and logger handles.
