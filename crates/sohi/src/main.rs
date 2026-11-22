@@ -11,6 +11,7 @@ mod head;
 mod hotkeys;
 mod logger;
 mod perf;
+mod runtime;
 mod tray_menu;
 
 use std::process::ExitCode;

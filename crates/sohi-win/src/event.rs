@@ -54,6 +54,8 @@ pub enum WinEvent {
     TrayActivated,
     /// Explorer (re)started: the tray icon must be added again.
     TaskbarCreated,
+    /// The runtime thread queued updates for the UI; drain its channel.
+    Runtime,
 }
 
 /// Shared, single-threaded FIFO of [`WinEvent`]s.
