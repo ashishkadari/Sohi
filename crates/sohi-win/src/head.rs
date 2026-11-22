@@ -64,9 +64,8 @@ pub struct HeadWindow {
     hwnd: OwnedHwnd,
     /// Lazily allocated on the first `present`, resized on DPI change.
     surface: Option<Surface>,
-    /// The last presented frame's placement. Unchanged position and size
-    /// are not passed again (keeps the update off the move/resize path),
-    /// and an unchanged placement allows a dirty-rectangle update.
+    /// The last presented frame's placement. An unchanged placement
+    /// allows a dirty-rectangle update.
     last: Option<Presented>,
 }
 
@@ -142,9 +141,6 @@ impl HeadWindow {
             opacity,
             shift,
         };
-        let moved = self
-            .last
-            .is_none_or(|l| l.dst != now.dst || l.size != now.size);
         let dirty = frame
             .dirty
             .filter(|_| self.last == Some(now) && shift == 0)
@@ -158,7 +154,7 @@ impl HeadWindow {
                 shift as usize,
             ),
         }
-        let result = update_layered(self.hwnd.raw(), surface.dc(), &now, moved, dirty);
+        let result = update_layered(self.hwnd.raw(), surface.dc(), &now, dirty);
         self.last = result.is_ok().then_some(now);
         result
     }
@@ -221,7 +217,6 @@ fn update_layered(
     hwnd: HWND,
     src_dc: HDC,
     now: &Presented,
-    moved: bool,
     dirty: Option<RectPx>,
 ) -> Result<(), WinError> {
     let src = POINT { x: 0, y: 0 };
@@ -239,16 +234,12 @@ fn update_layered(
     });
     let info = UPDATELAYEREDWINDOWINFO {
         cbSize: u32::try_from(size_of::<UPDATELAYEREDWINDOWINFO>()).unwrap_or(0),
-        pptDst: if moved {
-            &raw const now.dst
-        } else {
-            std::ptr::null()
-        },
-        psize: if moved {
-            &raw const now.size
-        } else {
-            std::ptr::null()
-        },
+        // Position and size go with every update, even unchanged. Leaving
+        // them out (allowed by the docs) made the compositor keep showing
+        // the first frame's content: a reveal that starts fully transparent
+        // then never became visible.
+        pptDst: &raw const now.dst,
+        psize: &raw const now.size,
         hdcSrc: src_dc,
         pptSrc: &raw const src,
         crKey: COLORREF(0),
