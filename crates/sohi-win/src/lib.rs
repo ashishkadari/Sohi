@@ -27,7 +27,7 @@ pub use head::{Frame, HeadWindow};
 pub use instance::{SingleInstance, forward_to_running_instance, register_window_message};
 pub use monitor::{MonitorInfo, primary_monitor};
 pub use msgloop::{post_quit, run_message_loop};
-pub use theme::force_dark_menus;
+pub use theme::{animations_enabled, force_dark_menus};
 pub use timer::{FRAME_30_FPS, FRAME_60_FPS, FrameTimer};
 pub use tray::{MenuItem, TrayIcon};
 pub use window::{AppWindow, RemoteWindow};

@@ -95,9 +95,15 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         config: config_file::default_path(),
         logs: logger::default_dir(),
     };
-    let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths)?;
+    let options = app::Options {
+        reduced_motion: config.ui.reduced_motion,
+        perf: args.perf.is_some(),
+    };
+    let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {
         app.show_test_card()?;
+    } else if config.ui.launch_peek {
+        app.peek(sohi_core::motion::LAUNCH_PEEK_HOLD);
     }
 
     // Armed: every startup step is done (spec §5.8 step 4).

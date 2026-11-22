@@ -121,9 +121,39 @@ pub(crate) fn swizzle_rgba_to_bgra(src: &[u8], dst: &mut [u8]) {
     }
 }
 
+/// Like [`swizzle_rgba_to_bgra`], but moves the image `shift` pixels to
+/// the right: the left `shift` columns become transparent and the
+/// rightmost columns of `src` are clipped. Both buffers are `width` pixels
+/// wide.
+pub(crate) fn swizzle_shifted(src: &[u8], dst: &mut [u8], width: usize, shift: usize) {
+    let stride = width * 4;
+    if stride == 0 {
+        return;
+    }
+    let shift = shift.min(width) * 4;
+    for (src_row, dst_row) in src.chunks_exact(stride).zip(dst.chunks_exact_mut(stride)) {
+        let (clear, rest) = dst_row.split_at_mut(shift);
+        clear.fill(0);
+        swizzle_rgba_to_bgra(&src_row[..rest.len()], rest);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shifted_swizzle_clears_left_and_clips_right() {
+        // One row, three pixels: A B C shifted by one gives _ A B.
+        let src = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        let mut dst = [0xFF; 12];
+        swizzle_shifted(&src, &mut dst, 3, 1);
+        assert_eq!(dst, [0, 0, 0, 0, 3, 2, 1, 4, 7, 6, 5, 8]);
+        swizzle_shifted(&src, &mut dst, 3, 9);
+        assert_eq!(dst, [0; 12]);
+        swizzle_shifted(&src, &mut dst, 3, 0);
+        assert_eq!(dst, [3, 2, 1, 4, 7, 6, 5, 8, 11, 10, 9, 12]);
+    }
 
     #[test]
     fn swizzle_swaps_red_and_blue() {

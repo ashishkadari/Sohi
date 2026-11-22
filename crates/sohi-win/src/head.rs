@@ -20,7 +20,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::hwnd::{OwnedHwnd, WindowSpec, WndHandler, create_window, signed_words};
-use crate::surface::{Surface, swizzle_rgba_to_bgra};
+use crate::surface::{Surface, swizzle_shifted};
 use crate::{EventQueue, WinError, WinEvent};
 
 /// `WM_MOUSELEAVE` (0x02A3). The `windows` crate defines it under
@@ -83,7 +83,9 @@ impl HeadWindow {
     }
 
     /// Puts `frame` on screen with its top-left at (`x`, `y`), multiplied by
-    /// `opacity` (255 = as drawn). Moves and resizes the window to match.
+    /// `opacity` (255 = as drawn) and with the content pushed `shift` pixels
+    /// right inside the window (clipped at its edge; used by the slide).
+    /// Moves and resizes the window to match.
     ///
     /// # Errors
     /// Returns [`WinError`] if the frame size is wrong or the update fails.
@@ -93,6 +95,7 @@ impl HeadWindow {
         x: i32,
         y: i32,
         opacity: u8,
+        shift: u32,
     ) -> Result<(), WinError> {
         let expected = frame.width as usize * frame.height as usize * 4;
         if frame.rgba.len() != expected || frame.width == 0 || frame.height == 0 {
@@ -106,7 +109,12 @@ impl HeadWindow {
         let Some(surface) = self.surface.as_mut() else {
             return Err(WinError::invalid("UpdateLayeredWindow", "surface"));
         };
-        swizzle_rgba_to_bgra(frame.rgba, surface.pixels_mut());
+        swizzle_shifted(
+            frame.rgba,
+            surface.pixels_mut(),
+            frame.width as usize,
+            shift as usize,
+        );
         let dst = POINT { x, y };
         let size = SIZE {
             cx: i32::try_from(frame.width).unwrap_or(0),

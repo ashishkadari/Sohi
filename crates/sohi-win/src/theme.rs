@@ -1,4 +1,5 @@
-//! Dark popup menus (spec §4.8).
+//! UI preferences: dark popup menus (spec §4.8) and the system's
+//! animation setting (spec §4.3).
 //!
 //! Win32 popup menus follow the per-app "preferred app mode" kept by
 //! uxtheme.dll. The setter is exported only by ordinal and is undocumented,
@@ -9,7 +10,28 @@
 use windows::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
-use windows::core::{PCSTR, w};
+use windows::Win32::UI::WindowsAndMessaging::{
+    SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+};
+use windows::core::{BOOL, PCSTR, w};
+
+/// Whether Windows "Animation effects" are on
+/// (`SPI_GETCLIENTAREAANIMATION`). Defaults to `true` if the query fails.
+#[must_use]
+pub fn animations_enabled() -> bool {
+    let mut on = BOOL(1);
+    // SAFETY: the action writes one BOOL through the pointer, which refers
+    // to a live local.
+    let result = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some((&raw mut on).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    result.is_err() || on.as_bool()
+}
 
 /// `SetPreferredAppMode` (uxtheme ordinal 135).
 const ORD_SET_PREFERRED_APP_MODE: usize = 135;

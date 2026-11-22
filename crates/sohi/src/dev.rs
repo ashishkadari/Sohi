@@ -54,7 +54,7 @@ fn triangle_wave(t: Duration) -> u8 {
 }
 
 /// Nearest-rank percentile of an ascending slice (zero when empty).
-fn percentile(sorted: &[Duration], pct: usize) -> Duration {
+pub fn percentile(sorted: &[Duration], pct: usize) -> Duration {
     if sorted.is_empty() {
         return Duration::ZERO;
     }
