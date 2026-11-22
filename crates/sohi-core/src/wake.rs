@@ -4,7 +4,7 @@
 //! from each sample, whether the pointer has dwelt in the hot zone long
 //! enough to wake.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::geometry::RectPx;
 
@@ -18,6 +18,54 @@ pub const POLL_TOLERANCE: Duration = Duration::from_millis(32);
 pub const NEAR_RADIUS_PX: i32 = 300;
 /// The hot zone is this many physical pixels square, at the corner.
 pub const HOT_ZONE_PX: i32 = 8;
+
+/// How long the pointer must stay in the hot zone to wake.
+pub const DWELL: Duration = Duration::from_millis(350);
+/// No corner wake for this long after the head finished retracting.
+pub const COOLDOWN: Duration = Duration::from_millis(1500);
+
+/// Whether a completed dwell may wake Sohi right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    /// Wake.
+    Allow,
+    /// Not yet (post-retract cooldown): keep dwelling and ask again.
+    Wait,
+    /// Not for this visit (already shown, or suppressed): the pointer must
+    /// leave the hot zone and come back.
+    Deny,
+}
+
+/// Continuous-presence tracking for the hot zone.
+///
+/// Presence starts at the first sample inside the zone and resets on any
+/// sample outside it or with a mouse button held, so a drag through the
+/// corner never counts. Once a dwell has been used (woken or suppressed)
+/// it does not count again until the pointer leaves and comes back.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Dwell {
+    entered: Option<Instant>,
+    used: bool,
+}
+
+impl Dwell {
+    /// Feeds one cursor sample. Returns `true` if the pointer has now been
+    /// in the zone, with no button held, for at least [`DWELL`], and this
+    /// visit has not been [`used`](Self::use_up) yet.
+    pub fn sample(&mut self, now: Instant, in_zone: bool, button_down: bool) -> bool {
+        if !in_zone || button_down {
+            *self = Self::default();
+            return false;
+        }
+        let entered = *self.entered.get_or_insert(now);
+        !self.used && now.saturating_duration_since(entered) >= DWELL
+    }
+
+    /// Marks this visit as spent: it woke Sohi, or the wake was suppressed.
+    pub fn use_up(&mut self) {
+        self.used = true;
+    }
+}
 
 /// The corner pixel the hot zone hangs from: the top-right pixel of
 /// `monitor` (`rcMonitor`, so it is the true screen corner even with a
@@ -83,6 +131,71 @@ mod tests {
         };
         assert!(in_hot_zone((-1, -300), m));
         assert!(!in_hot_zone((1919, 0), m));
+    }
+
+    const MS: fn(u64) -> Duration = Duration::from_millis;
+
+    #[test]
+    fn dwell_needs_continuous_presence() {
+        let t0 = Instant::now();
+        let mut d = Dwell::default();
+        assert!(!d.sample(t0, true, false));
+        assert!(!d.sample(t0 + MS(300), true, false));
+        assert!(d.sample(t0 + MS(350), true, false));
+        // Leaving resets presence.
+        let mut d = Dwell::default();
+        d.sample(t0, true, false);
+        d.sample(t0 + MS(200), false, false);
+        assert!(!d.sample(t0 + MS(250), true, false));
+        assert!(!d.sample(t0 + MS(550), true, false));
+        assert!(d.sample(t0 + MS(600), true, false));
+    }
+
+    #[test]
+    fn a_held_button_resets_and_blocks() {
+        let t0 = Instant::now();
+        let mut d = Dwell::default();
+        assert!(!d.sample(t0, true, true));
+        assert!(!d.sample(t0 + MS(1000), true, true), "dragging");
+        assert!(
+            !d.sample(t0 + MS(1100), true, false),
+            "released: starts now"
+        );
+        assert!(d.sample(t0 + MS(1450), true, false));
+        d.sample(t0 + MS(1460), true, true);
+        assert!(!d.sample(t0 + MS(1470), true, false), "press reset it");
+    }
+
+    #[test]
+    fn a_used_dwell_needs_a_new_visit() {
+        let t0 = Instant::now();
+        let mut d = Dwell::default();
+        d.sample(t0, true, false);
+        assert!(d.sample(t0 + MS(400), true, false));
+        d.use_up();
+        assert!(!d.sample(t0 + MS(5000), true, false), "lingering");
+        d.sample(t0 + MS(5050), false, false);
+        d.sample(t0 + MS(5100), true, false);
+        assert!(d.sample(t0 + MS(5450), true, false));
+    }
+
+    /// Passing through in under 300 ms at the near poll rate never wakes,
+    /// whatever the phase of the poll relative to the entry.
+    #[test]
+    fn a_quick_pass_never_wakes() {
+        let t0 = Instant::now();
+        for phase in 0..50 {
+            for stay in [50, 150, 299] {
+                let mut d = Dwell::default();
+                let enter = t0 + MS(phase);
+                let woke = (0..40).any(|i| {
+                    let t = t0 + POLL_NEAR * i;
+                    let inside = t >= enter && t < enter + MS(stay);
+                    d.sample(t, inside, false)
+                });
+                assert!(!woke, "phase {phase} stay {stay}");
+            }
+        }
     }
 
     #[test]

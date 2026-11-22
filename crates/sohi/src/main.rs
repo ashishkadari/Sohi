@@ -7,6 +7,7 @@ mod app;
 mod config_file;
 mod corner;
 mod dev;
+mod head;
 mod logger;
 mod perf;
 mod tray_menu;
@@ -105,9 +106,9 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {
-        app.show_test_card()?;
+        app.head().show_test_card()?;
     } else if args.dev_states {
-        app.start_dev_cycle();
+        app.head().start_dev_cycle();
     } else if config.ui.launch_peek {
         app.peek(sohi_core::motion::LAUNCH_PEEK_HOLD);
     }
