@@ -8,6 +8,7 @@ use sohi_core::config::ReducedMotion;
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::motion::LAUNCH_PEEK_HOLD;
 use sohi_core::visibility::Input;
+use sohi_core::wake::CornerSettings;
 use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{AppWindow, EventQueue, FrameTimer, RemoteWindow, TrayIcon, WinError, WinEvent};
 
@@ -33,6 +34,8 @@ pub struct Options {
     pub reduced_motion: ReducedMotion,
     /// `--perf`: report the first visible frame and slide frame costs.
     pub perf: bool,
+    /// Corner wake tunables from `[wake]`.
+    pub corner: CornerSettings,
 }
 
 /// Everything the UI thread owns.
@@ -49,6 +52,8 @@ pub struct App {
     monitor: RectPx,
     /// Corner wake polling.
     corner: Corner,
+    /// No corner wake this soon after a retract.
+    cooldown: Duration,
 }
 
 impl App {
@@ -78,7 +83,8 @@ impl App {
             menu_state: MenuState::default(),
             dpi,
             monitor: RectPx::default(),
-            corner: Corner::start(window),
+            corner: Corner::start(window, options.corner),
+            cooldown: options.corner.cooldown,
         };
         app.relayout();
         Ok(app)
@@ -129,10 +135,10 @@ impl App {
     }
 
     fn on_cursor_poll(&mut self) {
-        let head = &self.head;
+        let (head, cooldown) = (&self.head, self.cooldown);
         if self
             .corner
-            .on_poll(self.monitor, |now: Instant| head.corner_gate(now))
+            .on_poll(self.monitor, |now: Instant| head.corner_gate(now, cooldown))
         {
             log::info!("wake: corner");
             self.peek(WAKE_HOLD);

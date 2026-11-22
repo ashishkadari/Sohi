@@ -5,21 +5,25 @@
 use std::time::{Duration, Instant};
 
 use sohi_core::geometry::RectPx;
-use sohi_core::wake::{Dwell, Gate, POLL_FAR, POLL_TOLERANCE, in_hot_zone, poll_period};
+use sohi_core::wake::{
+    CornerSettings, Dwell, Gate, POLL_FAR, POLL_TOLERANCE, in_hot_zone, poll_period,
+};
 use sohi_win::{AppWindow, CursorPoller};
 
 /// Corner wake detection.
 pub struct Corner {
     poller: CursorPoller,
     dwell: Dwell,
+    settings: CornerSettings,
 }
 
 impl Corner {
     /// Starts polling at the far rate (spec §5.8 step 3).
-    pub fn start(window: &AppWindow) -> Self {
+    pub fn start(window: &AppWindow, settings: CornerSettings) -> Self {
         let corner = Self {
             poller: CursorPoller::new(window, POLL_TOLERANCE),
             dwell: Dwell::default(),
+            settings,
         };
         corner.set_period(Some(POLL_FAR));
         corner
@@ -39,10 +43,13 @@ impl Corner {
             return false;
         };
         self.set_period(Some(poll_period(cursor, monitor)));
-        let in_zone = in_hot_zone(cursor, monitor);
+        let in_zone = in_hot_zone(cursor, monitor, self.settings.zone_px);
         // Only read the buttons when it matters.
         let button_down = in_zone && sohi_win::mouse_button_down();
-        if !self.dwell.sample(now, in_zone, button_down) {
+        if !self
+            .dwell
+            .sample(now, in_zone, button_down, self.settings.dwell)
+        {
             return false;
         }
         match gate(now) {

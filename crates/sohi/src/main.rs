@@ -103,6 +103,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     let options = app::Options {
         reduced_motion: config.ui.reduced_motion,
         perf: args.perf.is_some(),
+        corner: sohi_core::wake::CornerSettings::from_config(&config.wake),
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {

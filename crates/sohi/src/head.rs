@@ -15,7 +15,7 @@ use sohi_core::geometry::RectPx;
 use sohi_core::motion::{Pose, Slide};
 use sohi_core::visibility::{Effect, Input, Phase, Visibility};
 use sohi_core::visual::{ERROR_FLASH, VisualState};
-use sohi_core::wake::{COOLDOWN, Gate};
+use sohi_core::wake::Gate;
 use sohi_render::{HeadRenderer, Scene};
 use sohi_win::{EventQueue, FRAME_30_FPS, FRAME_60_FPS, Frame, FrameTimer, HeadWindow, WinError};
 
@@ -129,11 +129,11 @@ impl Head {
     }
 
     /// Whether a corner dwell may reveal the head now: only when parked,
-    /// and only once the post-retract cooldown is over (spec §4.7).
-    pub fn corner_gate(&self, now: Instant) -> Gate {
+    /// and only once `cooldown` has passed since the last retract (§4.7).
+    pub fn corner_gate(&self, now: Instant, cooldown: Duration) -> Gate {
         if self.phase() != Phase::Parked {
             Gate::Deny
-        } else if self.visibility.corner_wake_allowed(now, COOLDOWN) {
+        } else if self.visibility.corner_wake_allowed(now, cooldown) {
             Gate::Allow
         } else {
             Gate::Wait
