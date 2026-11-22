@@ -2,10 +2,16 @@
 
 #![forbid(unsafe_code)]
 
+pub mod chat;
 pub mod config;
 pub mod geometry;
+pub mod history;
 pub mod hotkey;
+pub mod interaction;
 pub mod motion;
+pub mod persona;
+pub mod pill;
+pub mod secret;
 pub mod visibility;
 pub mod visual;
 pub mod wake;

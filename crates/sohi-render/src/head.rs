@@ -594,6 +594,13 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_precision_loss)] // small integers
+    fn frame_matches_the_pill_anchor() {
+        let (l, t, w, h) = sohi_core::pill::HEAD_FRAME_LAYOUT;
+        assert_eq!(FRAME, (l as f32, t as f32, w as f32, h as f32));
+    }
+
+    #[test]
     fn frame_has_window_size_at_each_scale() {
         for (w, h) in [(112, 84), (168, 126), (224, 168)] {
             let (r, frame) = render(VisualState::Idle, Duration::ZERO, 0.0, w, h);

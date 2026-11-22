@@ -77,3 +77,9 @@ pub fn post_quit(code: i32) {
     // SAFETY: no preconditions.
     unsafe { PostQuitMessage(code) };
 }
+
+/// Dispatches pending messages without waiting (tests that show windows).
+#[cfg(test)]
+pub(crate) fn pump_for_tests() {
+    let _ = pump_messages();
+}

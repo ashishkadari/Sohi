@@ -146,6 +146,23 @@ pub struct LlmConfig {
     pub offline_model: String,
 }
 
+impl LlmConfig {
+    /// The Anthropic model to fall back to, or `""` when there is no
+    /// online fallback (another `fallback_provider`, or no model set).
+    #[must_use]
+    pub fn anthropic_fallback(&self) -> &str {
+        if self
+            .fallback_provider
+            .trim()
+            .eq_ignore_ascii_case("anthropic")
+        {
+            self.anthropic_model.trim()
+        } else {
+            ""
+        }
+    }
+}
+
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
@@ -306,5 +323,15 @@ mod tests {
     #[test]
     fn unknown_enum_value_is_an_error() {
         assert!(Config::from_toml_str("[ui]\nreduced_motion = \"sometimes\"\n").is_err());
+    }
+
+    #[test]
+    fn the_anthropic_fallback_needs_a_model_and_the_provider() {
+        let mut llm = LlmConfig::default();
+        assert_eq!(llm.anthropic_fallback(), "");
+        llm.anthropic_model = " claude-haiku-5-5 ".to_owned();
+        assert_eq!(llm.anthropic_fallback(), "claude-haiku-5-5");
+        llm.fallback_provider = "none".to_owned();
+        assert_eq!(llm.anthropic_fallback(), "");
     }
 }

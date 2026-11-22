@@ -8,8 +8,10 @@ publish.workspace = true
 [dependencies]
 log.workspace = true
 sohi-core.workspace = true
+sohi-providers.workspace = true
 sohi-render.workspace = true
 sohi-win.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

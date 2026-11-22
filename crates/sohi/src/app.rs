@@ -6,16 +6,19 @@ use std::time::{Duration, Instant};
 
 use sohi_core::config::{ReducedMotion, WakeConfig};
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
+use sohi_core::interaction::Event as TextEvent;
 use sohi_core::visibility::{Input, Phase, RetractRule};
 use sohi_core::wake::CornerSettings;
 use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{
-    AppWindow, EventQueue, FrameTimer, PresenceWatch, RemoteWindow, TrayIcon, WinError, WinEvent,
+    AppWindow, EventQueue, FrameTimer, PresenceWatch, RemoteWindow, TimerHost, TrayIcon, WinError,
+    WinEvent,
 };
 
 use crate::corner::Corner;
 use crate::head::Head;
 use crate::hotkeys::{self, Hotkeys};
+use crate::text_mode::{TextMode, TextSettings};
 use crate::tray_menu::{self, MenuCommand, MenuState};
 
 /// Files the menu can open.
@@ -34,6 +37,12 @@ pub struct Options {
     pub perf: bool,
     /// `[wake]`: hotkeys and corner tunables.
     pub wake: WakeConfig,
+    /// `[llm] model`.
+    pub llm_model: String,
+    /// The Anthropic fallback model; empty for none.
+    pub llm_fallback_model: String,
+    /// `[persona] user_name`.
+    pub user_name: String,
 }
 
 /// Everything the UI thread owns.
@@ -56,6 +65,8 @@ pub struct App {
     _hotkeys: Hotkeys,
     /// Lock and display-power notifications, unregistered on drop.
     _presence: Option<PresenceWatch>,
+    /// The text pill and text turns.
+    text: TextMode,
 }
 
 impl App {
@@ -82,6 +93,16 @@ impl App {
         let presence = PresenceWatch::register(window)
             .inspect_err(|err| log::warn!("lock/display notifications unavailable: {err}"))
             .ok();
+        let text = TextMode::new(
+            queue.clone(),
+            window.remote(),
+            TimerHost::new(window),
+            TextSettings {
+                model: options.llm_model.clone(),
+                fallback_model: options.llm_fallback_model.clone(),
+                user_name: options.user_name.clone(),
+            },
+        );
         let mut app = Self {
             head,
             tray,
@@ -94,6 +115,7 @@ impl App {
             cooldown: corner.cooldown,
             _hotkeys: hotkeys,
             _presence: presence,
+            text,
         };
         app.relayout();
         Ok(app)
@@ -101,6 +123,13 @@ impl App {
 
     /// Handles one window event.
     pub fn handle(&mut self, event: WinEvent) {
+        self.dispatch(event);
+        // A retract rule, the voice hotkey or a lock may have put the head
+        // away: text mode closes with it.
+        self.text.follow_head(&mut self.head);
+    }
+
+    fn dispatch(&mut self, event: WinEvent) {
         match event {
             WinEvent::WakeRequested => {
                 // A second launch: an explicit request, like a hotkey, so
@@ -122,7 +151,10 @@ impl App {
                 log::info!("display changed");
                 self.relayout();
             }
-            WinEvent::HeadClicked => log::info!("head clicked"),
+            WinEvent::HeadClicked => {
+                log::info!("head clicked");
+                self.text.event(TextEvent::HeadClicked, &mut self.head);
+            }
             WinEvent::HeadContextMenu { x, y } | WinEvent::TrayMenu { x, y } => {
                 self.show_menu(x, y);
             }
@@ -131,6 +163,16 @@ impl App {
                 log::info!("taskbar restarted; re-adding tray icon");
                 if let Err(err) = self.tray.readd() {
                     log::warn!("cannot re-add tray icon: {err}");
+                }
+            }
+            WinEvent::Runtime => self.text.on_runtime(&mut self.head),
+            WinEvent::PillSubmit
+            | WinEvent::PillEscape
+            | WinEvent::PillRecall
+            | WinEvent::PillFocus(_) => self.text.on_pill(event, &mut self.head),
+            WinEvent::Timer { id } => {
+                if !self.text.on_timer(id, &mut self.head) {
+                    log::debug!("unknown timer {id}");
                 }
             }
             WinEvent::HeadHover(over) => {
@@ -185,8 +227,8 @@ impl App {
                 self.wake();
             }
             hotkeys::TEXT => {
-                log::info!("wake: hotkey (text; text mode is not available yet)");
-                self.wake();
+                log::info!("hotkey: text");
+                self.text.event(TextEvent::TextHotkey, &mut self.head);
             }
             other => log::warn!("unknown hotkey id {other}"),
         }
@@ -212,10 +254,8 @@ impl App {
                     sohi_win::post_quit(0);
                 }
             }
-            MenuCommand::Talk
-            | MenuCommand::Type
-            | MenuCommand::ForceOffline
-            | MenuCommand::StartWithWindows => {
+            MenuCommand::Type => self.text.event(TextEvent::HeadClicked, &mut self.head),
+            MenuCommand::Talk | MenuCommand::ForceOffline | MenuCommand::StartWithWindows => {
                 log::info!("{command:?} is not available yet");
             }
         }
@@ -238,6 +278,7 @@ impl App {
         }
         self.monitor = monitor.monitor;
         let rect = head_window_rect(monitor.work, monitor.dpi);
+        self.text.set_layout(rect, monitor.dpi);
         if self.head.set_rect(rect) {
             log::info!(
                 "head at {rect:?} (work {:?}, dpi {})",

@@ -4,9 +4,14 @@
 //! Every `unsafe` block needs a `// SAFETY:` comment, and the crate exposes
 //! safe RAII wrappers to the rest of the workspace.
 
+mod apptimer;
+mod clock;
+mod console;
+mod credential;
 mod cursor;
 mod error;
 mod event;
+mod gdi;
 mod handle;
 mod head;
 mod hotkey;
@@ -15,6 +20,8 @@ mod instance;
 mod monitor;
 mod msgloop;
 pub mod perf;
+mod pill;
+mod pill_proc;
 mod session;
 pub mod shell;
 mod surface;
@@ -23,6 +30,10 @@ mod timer;
 mod tray;
 mod window;
 
+pub use apptimer::{AppTimer, TimerHost};
+pub use clock::local_time;
+pub use console::Prompt;
+pub use credential::{delete_key, read_key, write_key};
 pub use cursor::{CursorPoller, cursor_pos, mouse_button_down};
 pub use error::WinError;
 pub use event::{EventQueue, WinEvent};
@@ -32,6 +43,7 @@ pub use hotkey::HotkeyRegistration;
 pub use instance::{SingleInstance, forward_to_running_instance, register_window_message};
 pub use monitor::{MonitorInfo, primary_monitor};
 pub use msgloop::{post_quit, run_message_loop};
+pub use pill::PillWindow;
 pub use session::{Presence, PresenceWatch};
 pub use theme::{animations_enabled, force_dark_menus};
 pub use timer::{FRAME_30_FPS, FRAME_60_FPS, FrameTimer};

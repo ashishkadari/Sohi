@@ -54,6 +54,21 @@ pub enum WinEvent {
     TrayActivated,
     /// Explorer (re)started: the tray icon must be added again.
     TaskbarCreated,
+    /// The runtime thread queued updates for the UI; drain its channel.
+    Runtime,
+    /// Enter in the pill's input: fetch the text with `take_input`.
+    PillSubmit,
+    /// Esc in the pill (or Alt+F4): close it.
+    PillEscape,
+    /// ↑ in the pill's input: recall the last prompt.
+    PillRecall,
+    /// The pill gained (`true`) or lost (`false`) keyboard focus.
+    PillFocus(bool),
+    /// An app timer started with [`TimerHost`](crate::TimerHost) fired.
+    Timer {
+        /// Its id.
+        id: usize,
+    },
 }
 
 /// Shared, single-threaded FIFO of [`WinEvent`]s.

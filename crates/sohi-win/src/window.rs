@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    PostMessageW, PostQuitMessage, SPI_SETWORKAREA, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE,
+    PostMessageW, PostQuitMessage, SPI_SETWORKAREA, WM_APP, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE,
     WM_DPICHANGED, WM_HOTKEY, WM_POWERBROADCAST, WM_SETTINGCHANGE, WM_TIMER, WM_WTSSESSION_CHANGE,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
@@ -24,6 +24,8 @@ use crate::{EventQueue, WinError, WinEvent, register_window_message};
 const NIN_SELECT: u32 = 0x0400;
 const NIN_KEYSELECT: u32 = 0x0401;
 const WM_CONTEXTMENU: u32 = 0x007B;
+/// Posted by the runtime thread after it queues updates for the UI.
+const WM_APP_EVENT: u32 = WM_APP + 2; // WM_APP + 1 is the tray callback
 
 /// The hidden top-level window that receives app-wide messages.
 pub struct AppWindow {
@@ -96,6 +98,10 @@ impl WndHandler for AppHandler {
                 self.queue.push(WinEvent::CursorPoll);
                 Some(LRESULT(0))
             }
+            WM_TIMER => {
+                self.queue.push(WinEvent::Timer { id: wparam.0 });
+                Some(LRESULT(0))
+            }
             WM_WTSSESSION_CHANGE => {
                 if let Some(p) = session_change(wparam) {
                     self.queue.push(WinEvent::Presence(p));
@@ -131,6 +137,10 @@ impl WndHandler for AppHandler {
                 self.queue.push(WinEvent::DisplayChanged);
                 Some(LRESULT(0))
             }
+            WM_APP_EVENT => {
+                self.queue.push(WinEvent::Runtime);
+                Some(LRESULT(0))
+            }
             m if m == self.wake_message => {
                 self.queue.push(WinEvent::WakeRequested);
                 Some(LRESULT(0))
@@ -155,10 +165,24 @@ impl RemoteWindow {
     /// # Errors
     /// Returns [`WinError`] if the window no longer exists.
     pub fn post_close(self) -> Result<(), WinError> {
+        self.post(WM_CLOSE)
+    }
+
+    /// Tells the UI thread that the runtime thread queued updates
+    /// ([`WinEvent::Runtime`]).
+    ///
+    /// # Errors
+    /// Returns [`WinError`] if the window no longer exists or its message
+    /// queue is full.
+    pub fn post_runtime_event(self) -> Result<(), WinError> {
+        self.post(WM_APP_EVENT)
+    }
+
+    fn post(self, msg: u32) -> Result<(), WinError> {
         let hwnd = HWND(self.0 as *mut c_void);
-        // SAFETY: PostMessageW validates the window handle itself, and
-        // WM_CLOSE carries no pointers.
-        unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }
+        // SAFETY: PostMessageW validates the window handle itself, and the
+        // messages posted here carry no pointers.
+        unsafe { PostMessageW(Some(hwnd), msg, WPARAM(0), LPARAM(0)) }
             .map_err(|e| WinError::api("PostMessageW", &e))
     }
 }
@@ -199,10 +223,11 @@ mod tests {
         );
         send(&window, 0xC123, 0, 0);
         send(&window, WM_TIMER, CURSOR_TIMER_ID, 0);
-        send(&window, WM_TIMER, 1, 0); // someone else's timer: ignored
+        send(&window, WM_TIMER, 1, 0); // an app timer
         send(&window, WM_HOTKEY, 7, 0);
         send(&window, WM_WTSSESSION_CHANGE, 7, 0); // WTS_SESSION_LOCK
         send(&window, WM_POWERBROADCAST, 18, 0); // PBT_APMRESUMEAUTOMATIC
+        send(&window, WM_APP_EVENT, 0, 0);
         let events: Vec<_> = std::iter::from_fn(|| queue.pop()).collect();
         assert_eq!(
             events,
@@ -212,9 +237,11 @@ mod tests {
                 WinEvent::DisplayChanged,
                 WinEvent::WakeRequested,
                 WinEvent::CursorPoll,
+                WinEvent::Timer { id: 1 },
                 WinEvent::Hotkey { id: 7 },
                 WinEvent::Presence(Presence::Locked(true)),
                 WinEvent::Presence(Presence::Suspended(false)),
+                WinEvent::Runtime,
             ]
         );
     }

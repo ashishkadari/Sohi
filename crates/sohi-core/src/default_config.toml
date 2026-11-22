@@ -21,7 +21,8 @@ reduced_motion = "system"   # "system" | "on" | "off"
 provider = "mistral"
 model = "mistral-small-latest"
 fallback_provider = "anthropic"
-anthropic_model = ""        # empty disables the Anthropic fallback
+anthropic_model = ""        # e.g. "claude-haiku-5-5"; empty disables the Anthropic fallback.
+                            # Its key: sohi.exe --set-key anthropic
 offline_model = ""          # an Ollama model name; empty disables Ollama
 
 [stt]

@@ -4,6 +4,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod chat;
 mod config_file;
 mod corner;
 mod dev;
@@ -11,6 +12,9 @@ mod head;
 mod hotkeys;
 mod logger;
 mod perf;
+mod runtime;
+mod set_key;
+mod text_mode;
 mod tray_menu;
 
 use std::process::ExitCode;
@@ -39,14 +43,18 @@ struct Args {
     /// `--perf[=<idle seconds>]`: print `perf:` lines, then exit after the
     /// idle sample.
     perf: Option<Duration>,
+    /// `--set-key <name>`: store an API key, then exit (spec §5.7).
+    set_key: Option<String>,
 }
 
 impl Args {
     fn parse(args: impl Iterator<Item = String>) -> (Self, Vec<String>) {
         let mut parsed = Self::default();
         let mut unknown = Vec::new();
-        for arg in args {
+        let mut args = args;
+        while let Some(arg) = args.next() {
             match arg.as_str() {
+                "--set-key" => parsed.set_key = Some(args.next().unwrap_or_default()),
                 "--test-panic" => parsed.test_panic = true,
                 "--dev-test-card" => parsed.dev_test_card = true,
                 "--dev-states" => parsed.dev_states = true,
@@ -72,6 +80,12 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, sohi_win::WinError> {
+    let (args, unknown) = Args::parse(std::env::args().skip(1));
+    if let Some(name) = &args.set_key {
+        // A one-off action: no window, no log and no single-instance check,
+        // so it also works while Sohi is running.
+        return Ok(set_key::run(name));
+    }
     let wake_message = sohi_win::register_window_message(WAKE_MESSAGE)?;
     let Some(_instance) = SingleInstance::acquire(INSTANCE_MUTEX)? else {
         // Another instance owns the mutex: ask it to wake and leave at once.
@@ -88,7 +102,6 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     let config = config_file::load(&config_file::default_path());
     log::set_max_level(config_file::level_filter(config.log.level));
 
-    let (args, unknown) = Args::parse(std::env::args().skip(1));
     if !unknown.is_empty() {
         log::warn!("ignoring unknown arguments: {unknown:?}");
     }
@@ -105,6 +118,9 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         reduced_motion: config.ui.reduced_motion,
         perf: args.perf.is_some(),
         wake: config.wake.clone(),
+        llm_model: config.llm.model.clone(),
+        llm_fallback_model: config.llm.anthropic_fallback().to_owned(),
+        user_name: config.persona.user_name.clone(),
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {
@@ -123,4 +139,29 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     let code = sohi_win::run_message_loop(&queue, &timer, |event| app.handle(event));
     log::info!("exiting with code {code}");
     Ok(ExitCode::from(u8::try_from(code).unwrap_or(1)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> (Args, Vec<String>) {
+        Args::parse(args.iter().map(|&a| a.to_owned()))
+    }
+
+    #[test]
+    fn set_key_takes_the_next_argument() {
+        let (args, unknown) = parse(&["--set-key", "mistral", "--bogus"]);
+        assert_eq!(args.set_key.as_deref(), Some("mistral"));
+        assert_eq!(unknown, ["--bogus"]);
+        let (args, _) = parse(&["--set-key"]);
+        assert_eq!(args.set_key.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn perf_takes_an_optional_duration() {
+        assert_eq!(parse(&["--perf=5"]).0.perf, Some(Duration::from_secs(5)));
+        assert_eq!(parse(&["--perf"]).0.perf, Some(perf::DEFAULT_IDLE));
+        assert_eq!(parse(&["--perf=x"]).1, ["--perf=x"]);
+    }
 }
