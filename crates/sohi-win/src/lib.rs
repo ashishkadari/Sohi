@@ -5,6 +5,7 @@
 //! safe RAII wrappers to the rest of the workspace.
 
 mod apptimer;
+mod capture;
 mod clock;
 mod console;
 mod credential;
@@ -31,6 +32,7 @@ mod tray;
 mod window;
 
 pub use apptimer::{AppTimer, TimerHost};
+pub use capture::Capture;
 pub use clock::local_time;
 pub use console::Prompt;
 pub use credential::{delete_key, read_key, write_key};
