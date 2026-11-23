@@ -16,7 +16,7 @@ use sohi_audio::ring::{CaptureReader, CaptureWriter, capture_ring};
 use sohi_audio::vad::{Earshot, Segment, Segmenter, Utterance, rms};
 use sohi_audio::wav;
 use sohi_core::chat::Message;
-use sohi_core::persona::HEARD_NAME;
+use sohi_core::persona::{HEARD_NAME, correct_heard_name};
 use sohi_core::secret::KeyName;
 use sohi_providers::voxtral::TranscribeRequest;
 use sohi_providers::{HttpClient, Mistral, ProviderError, Voxtral, mistral};
@@ -47,8 +47,10 @@ pub async fn run(runner: &mut ProviderRunner, listen: ListenTurn, ui: &UiLink<Up
     };
     let ended = Instant::now();
     let audio = wav::encode(&utterance.samples);
+    #[cfg(feature = "dev-record")]
+    record(turn, &audio);
     let text = match transcribe(&http, &listen, &audio).await {
-        Ok(text) => text,
+        Ok(text) => correct_heard_name(&text),
         Err(error) => {
             log::warn!("turn {turn}: transcription failed: {error}");
             ui.send(Update::Failed { turn, error });
@@ -183,6 +185,18 @@ fn on_segment(turn: u64, event: Segment, ui: &UiLink<Update>) -> ControlFlow<Opt
             ui.send(Update::NoSpeech { turn });
             ControlFlow::Break(None)
         }
+    }
+}
+
+/// `dev-record`: saves the utterance for tuning transcription.
+#[cfg(feature = "dev-record")]
+fn record(turn: u64, audio: &[u8]) {
+    let Some(dir) = std::env::var_os("SOHI_DEV_RECORD") else {
+        return;
+    };
+    let path = std::path::Path::new(&dir).join(format!("turn{turn:02}.wav"));
+    if let Err(err) = std::fs::write(&path, audio) {
+        log::warn!("dev-record: {}: {err}", path.display());
     }
 }
 

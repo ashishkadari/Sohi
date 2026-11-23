@@ -382,6 +382,8 @@ The `State` struct has three independent regions:
 > **Name.** STT defaults to `voxtral-mini-transcribe-3` with `context_bias=Sohi`, and a spoken turn's system prompt
 > says the name may be misheard. On 12 synthesized clips with the name and 7 without: 11/12 right and 1/7 wrong,
 > against 5/12 and 0/7 for `voxtral-mini-latest` with no bias. Picked from several settings on these same clips.
+> On 7 clips of the user's voice: 7/7 right (5/7 without the bias). The name alone still comes back as "So he", so an
+> utterance that is only a misheard name, with or without a greeting, is corrected locally; longer ones never are.
 > **Esc.** While a voice turn runs no Sohi window has the keyboard, so plain Esc is registered as a global hotkey
 > for exactly that long. Other apps do not receive Esc meanwhile.
 

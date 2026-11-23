@@ -86,6 +86,34 @@ pub fn text_system_prompt(user_name: &str, now: &LocalTime) -> String {
 /// The word speech recognition should expect (Voxtral's `context_bias`).
 pub const HEARD_NAME: &str = "Sohi";
 
+/// Corrects an utterance that is nothing but the misheard name, with or
+/// without a greeting. On its own, "Sohi" comes back as "So he" even with
+/// [`HEARD_NAME`] expected. Anything longer is left alone.
+#[must_use]
+pub fn correct_heard_name(text: &str) -> String {
+    const GREETINGS: [&str; 7] = ["", "hey ", "hi ", "hello ", "okay ", "ok ", "good morning "];
+    const MISHEARD: [&str; 6] = ["so he", "so i", "so hi", "sohee", "soi", "sophie"];
+    let plain: String = text
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect();
+    let plain = plain.split_whitespace().collect::<Vec<_>>().join(" ");
+    for greeting in GREETINGS {
+        let Some(rest) = plain.strip_prefix(greeting) else {
+            continue;
+        };
+        if MISHEARD.contains(&rest) {
+            let mut fixed = format!("{greeting}{HEARD_NAME}");
+            if let Some(first) = fixed.get_mut(..1) {
+                first.make_ascii_uppercase();
+            }
+            return fixed;
+        }
+    }
+    text.to_owned()
+}
+
 /// Added to the system prompt of a spoken turn.
 pub const SPOKEN_NOTE: &str = "\n\nThe user's latest message was spoken and transcribed. \
     Speech recognition confuses your name, Sohi, with \"so I\", \"so he\" and the like, \
@@ -94,6 +122,35 @@ pub const SPOKEN_NOTE: &str = "\n\nThe user's latest message was spoken and tran
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lone_misheard_name_is_corrected() {
+        for (heard, want) in [
+            ("So he", "Sohi"),
+            ("so I.", "Sohi"),
+            ("Sophie?", "Sohi"),
+            ("Hey, so he.", "Hey Sohi"),
+            ("Good morning, Sophie.", "Good morning Sohi"),
+        ] {
+            assert_eq!(correct_heard_name(heard), want);
+        }
+    }
+
+    #[test]
+    fn real_sentences_are_left_alone() {
+        for text in [
+            "He was tired, so he went home.",
+            "So I was thinking about dinner.",
+            "Hey, so I was thinking.",
+            "So he told me.",
+            "Call Sophie.",
+            "Sohi, tell me a joke.",
+            "So",
+            "",
+        ] {
+            assert_eq!(correct_heard_name(text), text);
+        }
+    }
 
     const NOW: LocalTime = LocalTime {
         year: 2026,
