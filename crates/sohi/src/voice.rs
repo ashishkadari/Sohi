@@ -16,6 +16,7 @@ use sohi_audio::ring::{CaptureReader, CaptureWriter, capture_ring};
 use sohi_audio::vad::{Earshot, Segment, Segmenter, Utterance, rms};
 use sohi_audio::wav;
 use sohi_core::chat::Message;
+use sohi_core::persona::HEARD_NAME;
 use sohi_core::secret::KeyName;
 use sohi_providers::voxtral::TranscribeRequest;
 use sohi_providers::{HttpClient, Mistral, ProviderError, Voxtral, mistral};
@@ -194,6 +195,7 @@ async fn transcribe(
     let request = TranscribeRequest {
         model: &listen.stt.model,
         language: &listen.stt.language,
+        bias: HEARD_NAME,
         wav: audio,
     };
     let transcript = Voxtral::public(http.clone())

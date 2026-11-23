@@ -83,6 +83,14 @@ pub fn text_system_prompt(user_name: &str, now: &LocalTime) -> String {
     prompt
 }
 
+/// The word speech recognition should expect (Voxtral's `context_bias`).
+pub const HEARD_NAME: &str = "Sohi";
+
+/// Added to the system prompt of a spoken turn.
+pub const SPOKEN_NOTE: &str = "\n\nThe user's latest message was spoken and transcribed. \
+    Speech recognition confuses your name, Sohi, with \"so I\", \"so he\" and the like, \
+    in either direction: read whichever fits, without remarking on it.";
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -98,6 +98,7 @@ mod tests {
             let request = TranscribeRequest {
                 model: &model,
                 language: "auto",
+                bias: "",
                 wav: &wav,
             };
             let started = std::time::Instant::now();
@@ -116,5 +117,30 @@ mod tests {
         }
         println!("{model}: {errors}/{total} words wrong");
         assert!(errors * 100 <= total * 15, "WER {errors}/{total} over 15 %");
+    }
+
+    /// Transcribes every WAV in the folder `SOHI_STT_DIR`, without and with
+    /// `SOHI_STT_BIAS` as the expected words, for comparison by eye.
+    #[tokio::test]
+    #[ignore = "needs the internet, the stored Mistral key and SOHI_STT_DIR"]
+    async fn voxtral_bias_comparison() {
+        let key = read_key(KeyName::Mistral).unwrap();
+        let client = Voxtral::public(HttpClient::new().unwrap());
+        let model = std::env::var("SOHI_STT_MODEL").unwrap_or_else(|_| SttConfig::default().model);
+        let bias = std::env::var("SOHI_STT_BIAS").unwrap_or_default();
+        for entry in std::fs::read_dir(std::env::var("SOHI_STT_DIR").unwrap()).unwrap() {
+            let path = entry.unwrap().path();
+            let wav = std::fs::read(&path).unwrap();
+            for bias in ["", bias.as_str()] {
+                let request = TranscribeRequest {
+                    model: &model,
+                    language: "auto",
+                    bias,
+                    wav: &wav,
+                };
+                let heard = client.transcribe(&key, &request).await;
+                println!("{:?} bias {bias:?}: {heard:?}", path.file_name());
+            }
+        }
     }
 }

@@ -194,7 +194,7 @@ impl Default for SttConfig {
     fn default() -> Self {
         Self {
             provider: "mistral".to_owned(),
-            model: "voxtral-mini-latest".to_owned(),
+            model: "voxtral-mini-transcribe-3".to_owned(),
             language: "auto".to_owned(),
         }
     }

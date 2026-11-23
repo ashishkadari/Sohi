@@ -11,7 +11,7 @@ use sohi_core::config::SttConfig;
 use sohi_core::geometry::{BASE_DPI, RectPx};
 use sohi_core::history::History;
 use sohi_core::interaction::{ERROR_HOLD, Effect, Event, Interaction, State};
-use sohi_core::persona::text_system_prompt;
+use sohi_core::persona::{SPOKEN_NOTE, text_system_prompt};
 use sohi_core::pill::pill_origin;
 use sohi_core::visibility::{Input, Phase};
 use sohi_win::{
@@ -327,8 +327,10 @@ impl TextMode {
     /// Hands a voice turn to the runtime thread, or returns its failure.
     /// The transcript joins the history when it arrives.
     fn start_listening(&mut self, turn: u64) -> Option<Event> {
+        let mut chat = self.chat_turn(turn);
+        chat.system.push_str(SPOKEN_NOTE);
         let request = Request::Listen(ListenTurn {
-            chat: self.chat_turn(turn),
+            chat,
             stt: self.settings.stt.clone(),
         });
         let sent = self.runtime().map(|r| r.send(request));

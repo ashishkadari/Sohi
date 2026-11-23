@@ -83,7 +83,7 @@ plugin/MCP runtime · installer or auto-update · telemetry · draggable widget.
 ### 2.3 External services
 | Role | Primary (online) | Fallback |
 |---|---|---|
-| STT | Mistral **Voxtral** via `POST https://api.mistral.ai/v1/audio/transcriptions`, model `voxtral-mini-latest` **[VERIFY]** | None in v1 (offline means text input). Windows offline speech recognition is a possible later phase. |
+| STT | Mistral **Voxtral** via `POST https://api.mistral.ai/v1/audio/transcriptions`, model `voxtral-mini-transcribe-3` **[VERIFY]** | None in v1 (offline means text input). Windows offline speech recognition is a possible later phase. |
 | LLM | Mistral chat completions, model `mistral-small-latest`, streaming SSE, function calling **[VERIFY tool-call schema]** | Anthropic Messages API (model set in config, e.g. a Claude Haiku/Sonnet tier). Used when Mistral fails before writing any text and `anthropic_model` is set; a reply already under way is never restarted on another provider, and offline **Ollama** at `http://127.0.0.1:11434` (`/api/tags`, `/api/chat` NDJSON) |
 | TTS | `TtsProvider` trait. Default: Mistral Voxtral TTS **if available on the account [VERIFY endpoint, model, streaming format]**, otherwise any streaming cloud TTS set in config | OneCore offline voices |
 
@@ -379,6 +379,9 @@ The `State` struct has three independent regions:
 > Thinking → Listening instead of TextEntry, with the reply still in the pill. 8 s of silence ends the conversation
 > (TextEntry, 10 s unfocused retract); clicking into the pill cancels the listening. A pill that is focused or holds
 > text gets no follow-up, and neither does a typed turn. From P5 the mic reopens only after playback ends.
+> **Name.** STT defaults to `voxtral-mini-transcribe-3` with `context_bias=Sohi`, and a spoken turn's system prompt
+> says the name may be misheard. On 12 synthesized clips with the name and 7 without: 11/12 right and 1/7 wrong,
+> against 5/12 and 0/7 for `voxtral-mini-latest` with no bias. Picked from several settings on these same clips.
 > **Esc.** While a voice turn runs no Sohi window has the keyboard, so plain Esc is registered as a global hotkey
 > for exactly that long. Other apps do not receive Esc meanwhile.
 
@@ -616,7 +619,8 @@ Every phase also requires:
   > (privacy indicator only while Listening). On SoundWire mics `IAudioClient::Initialize` takes 70–260 ms while the
   > endpoint powers up (first packet 105–310 ms measured); keeping a stream initialized while idle would buy about
   > 37 ms but risks the privacy indicator while idle. Anything said before the first packet is
-  > lost. In the first hand test every utterance that was found began at least 1.0 s into the audio.
+  > lost. In the second hand test (2026-11-23) speech was found as early as 256 ms into the audio,
+  > so a quick speaker can lose the first syllable.
 - [ ] The mic privacy indicator shows only while Listening.
 - [ ] Injected WAV fixtures: correct segmentation (start/end within ±100 ms of the labelled boundaries), cough-only clip ignored, silence clip → NoSpeechTimeout.
 - [ ] Voxtral transcript matches the fixtures (WER sanity check ≤ 15% on the 5 fixture clips).

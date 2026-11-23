@@ -25,6 +25,8 @@ pub struct TranscribeRequest<'a> {
     pub model: &'a str,
     /// An ISO 639-1 code, or `auto` (or empty) to let the service detect it.
     pub language: &'a str,
+    /// Words to expect, such as names, comma-separated; empty for none.
+    pub bias: &'a str,
     /// The audio as a WAV file.
     pub wav: &'a [u8],
 }
@@ -129,6 +131,9 @@ fn form(boundary: &str, request: &TranscribeRequest<'_>) -> Vec<u8> {
     if !language.is_empty() && !language.eq_ignore_ascii_case("auto") {
         field("language", language);
     }
+    if !request.bias.is_empty() {
+        field("context_bias", request.bias);
+    }
     body.extend_from_slice(
         format!(
             "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\nContent-Type: audio/wav\r\n\r\n"
@@ -181,6 +186,7 @@ mod tests {
         let request = TranscribeRequest {
             model: "voxtral-mini-latest",
             language: "en",
+            bias: "Sohi,Ada",
             wav: WAV,
         };
         let got = client(&server.url(""))
@@ -200,6 +206,7 @@ mod tests {
         let want = format!(
             "--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nvoxtral-mini-latest\r\n\
              --{boundary}\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\nen\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"context_bias\"\r\n\r\nSohi,Ada\r\n\
              --{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\n\
              Content-Type: audio/wav\r\n\r\nRIFF\u{10}\0\0\0WAVEfake audio\r\n--{boundary}--\r\n"
         );
@@ -212,6 +219,7 @@ mod tests {
             let request = TranscribeRequest {
                 model: "m",
                 language,
+                bias: "",
                 wav: WAV,
             };
             let body = String::from_utf8_lossy(&form("b", &request)).into_owned();
@@ -236,6 +244,7 @@ mod tests {
         let request = TranscribeRequest {
             model: "m",
             language: "auto",
+            bias: "",
             wav: WAV,
         };
         let got = client(&server.url(""))
@@ -260,6 +269,7 @@ mod tests {
         let request = TranscribeRequest {
             model: "m",
             language: "auto",
+            bias: "",
             wav: WAV,
         };
         let got = voxtral.transcribe(&key(), &request).await.unwrap_err();
