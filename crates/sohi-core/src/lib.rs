@@ -13,6 +13,7 @@ pub mod motion;
 pub mod persona;
 pub mod pill;
 pub mod secret;
+pub mod speech;
 pub mod visibility;
 pub mod visual;
 pub mod wake;
