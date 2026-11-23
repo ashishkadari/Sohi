@@ -11,8 +11,8 @@ use sohi_core::visibility::Input;
 use sohi_core::wake::CornerSettings;
 use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{
-    AppWindow, EventQueue, FrameTimer, PresenceWatch, RemoteWindow, TimerHost, TrayIcon, WinError,
-    WinEvent,
+    AppWindow, EventQueue, FrameTimer, HotkeyHost, PresenceWatch, RemoteWindow, TimerHost,
+    TrayIcon, WinError, WinEvent,
 };
 
 use crate::corner::Corner;
@@ -99,11 +99,13 @@ impl App {
             queue.clone(),
             window.remote(),
             TimerHost::new(window),
+            HotkeyHost::new(window),
             TextSettings {
                 model: options.llm_model.clone(),
                 fallback_model: options.llm_fallback_model.clone(),
                 user_name: options.user_name.clone(),
                 stt: options.stt.clone(),
+                follow_up: options.wake.follow_up,
             },
         );
         let mut app = Self {
@@ -226,6 +228,10 @@ impl App {
             hotkeys::TEXT => {
                 log::info!("hotkey: text");
                 self.text.event(TextEvent::TextHotkey, &mut self.head);
+            }
+            hotkeys::ESCAPE => {
+                log::info!("hotkey: Esc");
+                self.text.event(TextEvent::Escape, &mut self.head);
             }
             other => log::warn!("unknown hotkey id {other}"),
         }

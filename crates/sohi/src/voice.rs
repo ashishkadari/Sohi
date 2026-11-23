@@ -13,7 +13,7 @@ use std::ops::ControlFlow;
 use std::time::{Duration, Instant};
 
 use sohi_audio::ring::{CaptureReader, CaptureWriter, capture_ring};
-use sohi_audio::vad::{Earshot, Segment, Segmenter, Utterance};
+use sohi_audio::vad::{Earshot, Segment, Segmenter, Utterance, rms};
 use sohi_audio::wav;
 use sohi_core::chat::Message;
 use sohi_core::secret::KeyName;
@@ -55,10 +55,12 @@ pub async fn run(runner: &mut ProviderRunner, listen: ListenTurn, ui: &UiLink<Up
         }
     };
     log::info!(
-        "turn {turn}: {} ms of speech ({} KB) transcribed in {} ms",
+        "turn {turn}: {} ms of speech ({} KB) at {:.0} dBFS transcribed in {} ms ({} chars)",
         utterance.speech_ms(),
         audio.len() / 1024,
-        ended.elapsed().as_millis()
+        20.0 * rms(&utterance.samples).max(1e-6).log10(),
+        ended.elapsed().as_millis(),
+        text.chars().count()
     );
     ui.send(Update::Transcript {
         turn,

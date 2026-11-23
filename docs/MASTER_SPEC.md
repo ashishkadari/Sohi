@@ -375,6 +375,13 @@ The `State` struct has three independent regions:
 > pill). The connectivity guard on Wake{Voice} arrives with the Connectivity region; until then an offline voice
 > turn fails at transcription with the usual error.
 
+> SPEC CHANGE (2026-11-23): **follow-up.** With `[wake] follow_up = true` (the default), a finished voice reply goes
+> Thinking → Listening instead of TextEntry, with the reply still in the pill. 8 s of silence ends the conversation
+> (TextEntry, 10 s unfocused retract); clicking into the pill cancels the listening. A pill that is focused or holds
+> text gets no follow-up, and neither does a typed turn. From P5 the mic reopens only after playback ends.
+> **Esc.** While a voice turn runs no Sohi window has the keyboard, so plain Esc is registered as a global hotkey
+> for exactly that long. Other apps do not receive Esc meanwhile.
+
 ### 5.3 Connectivity transitions
 ~~~
                  request fails (DNS/connect/TLS/timeout)  or  NLM hint = no internet
@@ -608,7 +615,8 @@ Every phase also requires:
   > SPEC CHANGE (2026-11-22): wake → mic capturing relaxed from 80 ms to 350 ms. The mic still opens only at wake
   > (privacy indicator only while Listening). On SoundWire mics `IAudioClient::Initialize` takes 70–260 ms while the
   > endpoint powers up (first packet 105–310 ms measured); keeping a stream initialized while idle would buy about
-  > 37 ms but risks the privacy indicator while idle. Speech is not lost: users rarely speak within 300 ms of wake.
+  > 37 ms but risks the privacy indicator while idle. Anything said before the first packet is
+  > lost. In the first hand test every utterance that was found began at least 1.0 s into the audio.
 - [ ] The mic privacy indicator shows only while Listening.
 - [ ] Injected WAV fixtures: correct segmentation (start/end within ±100 ms of the labelled boundaries), cough-only clip ignored, silence clip → NoSpeechTimeout.
 - [ ] Voxtral transcript matches the fixtures (WER sanity check ≤ 15% on the 5 fixture clips).
@@ -867,7 +875,7 @@ minimum granularity, not a cap.
 1. Voxtral transcription endpoint path, model ID (`voxtral-mini-latest`?), multipart field names, supported audio formats and size limits.
    *(Verified 2026-11-22: `POST /v1/audio/transcriptions`, Bearer auth, multipart fields `file`, `model` and optional
    `language` (ISO 639-1; left out to auto-detect); answer JSON `text`, `language`. `voxtral-mini-latest` is listed
-   for the account and transcribes the five P4 fixtures with 0/39 word errors in 220–320 ms; `voxtral-mini-transcribe-3`
+   for the account and transcribes the five P4 fixtures with 0/39 word errors in 215–393 ms; `voxtral-mini-transcribe-3`
    scores the same. A WAV upload works; size limits not yet measured.)*
 2. Mistral TTS availability, endpoint, voice IDs, streaming support and output formats (PCM preferred). If unavailable, pick and document an alternative cloud TTS.
 3. Mistral function-calling schema and streaming tool-call delta format.

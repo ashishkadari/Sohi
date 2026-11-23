@@ -10,6 +10,8 @@ use sohi_win::{AppWindow, HotkeyRegistration, TrayIcon};
 pub const VOICE: u16 = 1;
 /// Opens text mode.
 pub const TEXT: u16 = 2;
+/// Esc, held only while a voice turn runs.
+pub const ESCAPE: u16 = 3;
 
 /// The registered hotkeys; each is unregistered on drop.
 pub struct Hotkeys {

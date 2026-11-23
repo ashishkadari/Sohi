@@ -12,6 +12,8 @@ hotkey_text = "Ctrl+Alt+T"
 corner_size_px = 8      # hot zone size, physical pixels
 dwell_ms = 350          # how long the pointer must stay there
 cooldown_ms = 1500      # no corner wake this soon after Sohi hides
+# After a voice reply, listen again until 8 s of silence (Esc stops).
+follow_up = true
 
 [ui]
 launch_peek = true          # show briefly after start

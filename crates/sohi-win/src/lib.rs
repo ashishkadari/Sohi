@@ -41,7 +41,7 @@ pub use error::WinError;
 pub use event::{EventQueue, WinEvent};
 pub use handle::OwnedHandle;
 pub use head::{Frame, HeadWindow};
-pub use hotkey::HotkeyRegistration;
+pub use hotkey::{HotkeyHost, HotkeyRegistration};
 pub use instance::{SingleInstance, forward_to_running_instance, register_window_message};
 pub use monitor::{MonitorInfo, primary_monitor};
 pub use msgloop::{post_quit, run_message_loop};

@@ -14,10 +14,14 @@ use sohi_core::interaction::{ERROR_HOLD, Effect, Event, Interaction, State};
 use sohi_core::persona::text_system_prompt;
 use sohi_core::pill::pill_origin;
 use sohi_core::visibility::{Input, Phase};
-use sohi_win::{AppTimer, EventQueue, PillWindow, RemoteWindow, TimerHost, WinEvent};
+use sohi_win::{
+    AppTimer, EventQueue, HotkeyHost, HotkeyRegistration, PillWindow, RemoteWindow, TimerHost,
+    WinEvent,
+};
 
 use crate::chat::{ChatTurn, ListenTurn, Request, Update};
 use crate::head::Head;
+use crate::hotkeys;
 use crate::runtime::Runtime;
 
 /// App-window timer ids.
@@ -38,6 +42,8 @@ pub struct TextSettings {
     pub user_name: String,
     /// `[stt]`.
     pub stt: SttConfig,
+    /// `[wake] follow_up`.
+    pub follow_up: bool,
 }
 
 /// Text mode's state.
@@ -50,6 +56,10 @@ pub struct TextMode {
     queue: EventQueue,
     window: RemoteWindow,
     timers: TimerHost,
+    hotkeys: HotkeyHost,
+    /// Esc, held while a voice turn runs: the mic is open but no Sohi
+    /// window has the keyboard.
+    escape: Option<HotkeyRegistration>,
     pill_idle: Option<AppTimer>,
     error_hold: Option<AppTimer>,
     head_rect: RectPx,
@@ -63,10 +73,11 @@ impl TextMode {
         queue: EventQueue,
         window: RemoteWindow,
         timers: TimerHost,
+        hotkeys: HotkeyHost,
         settings: TextSettings,
     ) -> Self {
         Self {
-            interaction: Interaction::new(),
+            interaction: Interaction::new().with_follow_up(settings.follow_up),
             pill: None,
             runtime: None,
             history: History::new(),
@@ -74,6 +85,8 @@ impl TextMode {
             queue,
             window,
             timers,
+            hotkeys,
+            escape: None,
             pill_idle: None,
             error_hold: None,
             head_rect: RectPx::default(),
@@ -90,6 +103,20 @@ impl TextMode {
             for effect in self.interaction.step(event) {
                 pending.extend(self.apply(effect, head));
             }
+        }
+        self.sync_escape();
+    }
+
+    /// Holds Esc exactly while a voice turn runs.
+    fn sync_escape(&mut self) {
+        if !self.interaction.voice_active() {
+            self.escape = None;
+        } else if self.escape.is_none() {
+            self.escape = self
+                .hotkeys
+                .escape(hotkeys::ESCAPE)
+                .inspect_err(|err| log::warn!("Esc cannot stop listening: {err}"))
+                .ok();
         }
     }
 

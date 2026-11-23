@@ -158,6 +158,17 @@ pub enum Effect {
     StartErrorTimer,
 }
 
+/// How a turn started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Source {
+    /// Typed into the pill.
+    Typed,
+    /// A voice wake.
+    Wake,
+    /// The mic reopened after a voice reply; the pill is open.
+    FollowUp,
+}
+
 /// The Interaction region.
 #[derive(Debug, Clone)]
 pub struct Interaction {
@@ -165,6 +176,9 @@ pub struct Interaction {
     next_turn: u64,
     focused: bool,
     has_input: bool,
+    /// How the latest turn started.
+    source: Source,
+    follow_up: bool,
 }
 
 impl Default for Interaction {
@@ -182,7 +196,23 @@ impl Interaction {
             next_turn: 1,
             focused: false,
             has_input: false,
+            source: Source::Typed,
+            follow_up: false,
         }
+    }
+
+    /// Whether to listen again after a voice reply.
+    #[must_use]
+    pub fn with_follow_up(mut self, follow_up: bool) -> Self {
+        self.follow_up = follow_up;
+        self
+    }
+
+    /// Whether a voice turn is listening, transcribing or answering (Esc
+    /// cancels it whatever window has the keyboard).
+    #[must_use]
+    pub fn voice_active(&self) -> bool {
+        self.source != Source::Typed && self.current_turn().is_some()
     }
 
     /// The current state.
@@ -220,6 +250,13 @@ impl Interaction {
                 vec![Effect::AppendBubble(text)]
             }
             (Thinking { turn }, Event::LlmDone { turn: t }) if t == turn => {
+                if self.follow_up
+                    && self.source != Source::Typed
+                    && !self.focused
+                    && !self.has_input
+                {
+                    return self.listen_again();
+                }
                 self.state = TextEntry;
                 vec![
                     Effect::SetVisual(VisualState::Idle),
@@ -280,8 +317,27 @@ impl Interaction {
                 ]
             }
             (Listening { turn }, Event::NoSpeech { turn: t }) if turn == *t => {
+                if self.source == Source::FollowUp {
+                    // The last reply is still in the pill: leave it up.
+                    return Some(self.stop_following_up());
+                }
                 self.state = Idle;
                 vec![Effect::SetVisual(VisualState::Idle), Effect::Retract]
+            }
+            // Clicking into the pill during a follow-up: the user would
+            // rather type.
+            (
+                Listening { turn },
+                Event::PillFocus {
+                    focused: true,
+                    has_input,
+                },
+            ) if self.source == Source::FollowUp => {
+                self.focused = true;
+                self.has_input = *has_input;
+                let mut effects = vec![Effect::CancelTurn { turn }];
+                effects.extend(self.stop_following_up());
+                effects
             }
             (Transcribing { turn }, Event::Transcript { turn: t, text }) if turn == *t => {
                 self.heard(turn, text)
@@ -291,13 +347,38 @@ impl Interaction {
     }
 
     fn listen(&mut self) -> Vec<Effect> {
-        let turn = self.next_turn;
-        self.next_turn += 1;
-        self.state = State::Listening { turn };
+        let turn = self.start_voice_turn(Source::Wake);
         vec![
             Effect::Reveal(RetractRule::NoSpeech),
             Effect::StartListening { turn },
             Effect::SetVisual(VisualState::Listening),
+        ]
+    }
+
+    /// Listens for a follow-up with the reply still in the pill. The mic's
+    /// own 8 s limit ends it, so no retract rule runs meanwhile.
+    fn listen_again(&mut self) -> Vec<Effect> {
+        let turn = self.start_voice_turn(Source::FollowUp);
+        vec![
+            Effect::Keep(RetractRule::Working),
+            Effect::StartListening { turn },
+            Effect::SetVisual(VisualState::Listening),
+        ]
+    }
+
+    fn start_voice_turn(&mut self, source: Source) -> u64 {
+        let turn = self.next_turn;
+        self.next_turn += 1;
+        self.state = State::Listening { turn };
+        self.source = source;
+        turn
+    }
+
+    fn stop_following_up(&mut self) -> Vec<Effect> {
+        self.state = State::TextEntry;
+        vec![
+            Effect::SetVisual(VisualState::Idle),
+            Effect::Keep(self.entry_rule()),
         ]
     }
 
@@ -369,6 +450,7 @@ impl Interaction {
         self.next_turn += 1;
         self.state = State::Thinking { turn };
         self.has_input = false;
+        self.source = Source::Typed;
         vec![
             Effect::SetBubble(format!("› {text}\n")),
             Effect::StartTurn { turn, text },

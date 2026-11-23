@@ -362,3 +362,92 @@ fn escape_while_listening_cancels_and_retracts() {
     assert!(effects.contains(&Effect::Retract));
     assert_eq!(m.current_turn(), None);
 }
+
+/// A voice turn answered with follow-up on; returns the follow-up's turn.
+fn following_up(m: &mut Interaction) -> u64 {
+    let turn = listening(m);
+    m.step(Event::SpeechEnded { turn });
+    m.step(Event::Transcript {
+        turn,
+        text: "hello".into(),
+    });
+    let effects = m.step(Event::LlmDone { turn });
+    let next = turn + 1;
+    assert_eq!(
+        effects,
+        [
+            Effect::Keep(RetractRule::Working),
+            Effect::StartListening { turn: next },
+            Effect::SetVisual(VisualState::Listening),
+        ]
+    );
+    assert_eq!(m.state(), State::Listening { turn: next });
+    next
+}
+
+#[test]
+fn a_voice_reply_listens_again_and_silence_leaves_the_reply_up() {
+    let mut m = Interaction::new().with_follow_up(true);
+    let turn = following_up(&mut m);
+    assert!(m.voice_active());
+    assert_eq!(
+        m.step(Event::NoSpeech { turn }),
+        [
+            Effect::SetVisual(VisualState::Idle),
+            Effect::Keep(RetractRule::TextReplyUnfocused),
+        ]
+    );
+    assert_eq!(m.state(), State::TextEntry);
+    assert!(!m.voice_active());
+}
+
+#[test]
+fn clicking_into_the_pill_stops_the_follow_up() {
+    let mut m = Interaction::new().with_follow_up(true);
+    let turn = following_up(&mut m);
+    let effects = m.step(Event::PillFocus {
+        focused: true,
+        has_input: false,
+    });
+    assert_eq!(effects[0], Effect::CancelTurn { turn });
+    assert!(effects.contains(&Effect::Keep(RetractRule::TextFocused)));
+    assert_eq!(m.state(), State::TextEntry);
+    m.step(Event::TextSubmitted("typed".into()));
+    let State::Thinking { turn } = m.state() else {
+        panic!("{:?}", m.state());
+    };
+    // A typed turn never opens the mic.
+    assert!(!m.voice_active());
+    m.step(Event::LlmDone { turn });
+    assert_eq!(m.state(), State::TextEntry);
+}
+
+#[test]
+fn a_focused_pill_gets_no_follow_up() {
+    let mut m = Interaction::new().with_follow_up(true);
+    let turn = listening(&mut m);
+    m.step(Event::SpeechEnded { turn });
+    m.step(Event::Transcript {
+        turn,
+        text: "hello".into(),
+    });
+    m.step(Event::PillFocus {
+        focused: true,
+        has_input: false,
+    });
+    m.step(Event::LlmDone { turn });
+    assert_eq!(m.state(), State::TextEntry);
+}
+
+#[test]
+fn escape_ends_a_follow_up() {
+    let mut m = Interaction::new().with_follow_up(true);
+    let turn = following_up(&mut m);
+    let effects = m.step(Event::Escape);
+    assert_eq!(effects[0], Effect::CancelTurn { turn });
+    assert!(effects.contains(&Effect::HidePill));
+    assert_eq!(m.state(), State::Idle);
+    // The next wake is a fresh one: silence retracts.
+    let turn = listening(&mut m);
+    assert!(m.step(Event::NoSpeech { turn }).contains(&Effect::Retract));
+}
