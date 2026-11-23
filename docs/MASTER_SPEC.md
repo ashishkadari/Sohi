@@ -884,6 +884,11 @@ minimum granularity, not a cap.
    for the account and transcribes the five P4 fixtures with 0/39 word errors in 215–393 ms; `voxtral-mini-transcribe-3`
    scores the same. A WAV upload works; size limits not yet measured.)*
 2. Mistral TTS availability, endpoint, voice IDs, streaming support and output formats (PCM preferred). If unavailable, pick and document an alternative cloud TTS.
+   *(Verified 2026-11-23 live: `POST /v1/audio/speech`, Bearer auth, JSON `model`, `input`, `voice_id`,
+   `response_format`, `stream`. A voice is required (400 without). `stream: true` answers with server-sent events:
+   `speech.audio.delta` with base64 `audio_data`, then `speech.audio.done`. `pcm` is float32 LE, 24 kHz mono. Model
+   `voxtral-mini-tts-3`; first audio about 0.4 s. `GET /v1/audio/voices` lists the voices. US-English female:
+   Sheila `voice_478`, Margaret `voice_447`, and Jane `gb_jane_*` in several moods, tagged `en_us` but with a `gb_` id.)*
 3. Mistral function-calling schema and streaming tool-call delta format.
 4. Anthropic Messages API current model IDs and streaming event types for tool use. *(Text streaming verified 2026-11-22:
    `POST /v1/messages`, `x-api-key`, `anthropic-version: 2026-10-21` (no `temperature`/`top_p`/`top_k` on that version),
