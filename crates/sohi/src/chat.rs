@@ -1,12 +1,14 @@
-//! Text turns on the runtime thread (spec §5.5, text path).
+//! Turns on the runtime thread (spec §5.5).
 //!
-//! The UI sends a [`Request::Chat`] with the whole conversation; the
+//! The UI sends a [`Request::Chat`] with the whole conversation, or a
+//! [`Request::Listen`] for a voice turn (see [`crate::voice`]); the
 //! runtime streams the reply back as [`Update`]s. Prompts and replies are
 //! never logged at `info` (spec §9.5); only timings and outcomes are.
 
 use std::time::Instant;
 
 use sohi_core::chat::Message;
+use sohi_core::config::SttConfig;
 use sohi_core::secret::{KeyName, Secret};
 use sohi_providers::retry::{jitter_seed, retry_delay, retry_once};
 use sohi_providers::{
@@ -22,6 +24,9 @@ pub enum Request {
     /// Start a text turn. A turn still running is dropped first: exactly
     /// one turn runs at a time (spec §9.3).
     Chat(ChatTurn),
+    /// Start a voice turn: listen, transcribe, then answer like a text
+    /// turn. Replaces a running turn the same way.
+    Listen(ListenTurn),
     /// Cancel `turn` if it is the one running. `at` is when the user asked,
     /// for the latency log.
     Cancel {
@@ -47,9 +52,54 @@ pub struct ChatTurn {
     pub messages: Vec<Message>,
 }
 
+/// One voice turn: its [`ChatTurn`] holds the conversation *before* the
+/// transcript, which the runtime appends.
+#[derive(Debug)]
+pub struct ListenTurn {
+    /// The chat that follows the transcript.
+    pub chat: ChatTurn,
+    /// `[stt]` settings.
+    pub stt: SttConfig,
+}
+
 /// Runtime → UI.
 #[derive(Debug)]
 pub enum Update {
+    /// The mic level (RMS, 0 to 1), about 30 times a second.
+    Level {
+        /// The turn.
+        turn: u64,
+        /// The level.
+        level: f32,
+    },
+    /// The user started speaking.
+    SpeechStarted {
+        /// The turn.
+        turn: u64,
+    },
+    /// The utterance ended; the mic is closed and it is being transcribed.
+    SpeechEnded {
+        /// The turn.
+        turn: u64,
+    },
+    /// Nobody spoke; the mic is closed.
+    NoSpeech {
+        /// The turn.
+        turn: u64,
+    },
+    /// What was said. Empty if nothing was understood; otherwise the
+    /// reply follows as for a text turn.
+    Transcript {
+        /// The turn.
+        turn: u64,
+        /// The transcript.
+        text: String,
+    },
+    /// The mic could not be opened or stopped delivering audio.
+    MicFailed {
+        /// The turn.
+        turn: u64,
+    },
     /// The next piece of the reply.
     Delta {
         /// The turn.
@@ -73,27 +123,72 @@ pub enum Update {
     },
 }
 
+/// A turn to run.
+#[derive(Debug)]
+enum Job {
+    Chat(ChatTurn),
+    Listen(ListenTurn),
+}
+
+impl Job {
+    fn id(&self) -> u64 {
+        match self {
+            Self::Chat(turn) => turn.turn,
+            Self::Listen(listen) => listen.chat.turn,
+        }
+    }
+}
+
 /// Runs one turn to completion, sending its updates. Dropping the future
-/// cancels the turn, including any HTTP request in flight.
+/// cancels the turn, including any HTTP request in flight and the mic.
 trait TurnRunner {
-    async fn run(&mut self, turn: ChatTurn, ui: &UiLink<Update>);
+    async fn run(&mut self, job: Job, ui: &UiLink<Update>);
 }
 
 /// Turns against the online providers; the HTTP client is created on the
 /// first turn and shared after that, so connections are pooled.
-struct ProviderRunner {
+#[derive(Default)]
+pub struct ProviderRunner {
     http: Option<HttpClient>,
+    /// When the connection was last warmed (spec §3.3: cached 60 s).
+    pub prewarmed: Option<Instant>,
+}
+
+impl ProviderRunner {
+    /// The shared HTTP client, created on first use.
+    ///
+    /// # Errors
+    /// Returns [`ProviderError::Offline`] if the TLS backend cannot start.
+    pub fn client(&mut self) -> Result<HttpClient, ProviderError> {
+        if let Some(http) = &self.http {
+            return Ok(http.clone());
+        }
+        let http = HttpClient::new()?;
+        Ok(self.http.insert(http).clone())
+    }
 }
 
 impl TurnRunner for ProviderRunner {
-    async fn run(&mut self, turn: ChatTurn, ui: &UiLink<Update>) {
-        run_turn(&mut self.http, turn, ui).await;
+    async fn run(&mut self, job: Job, ui: &UiLink<Update>) {
+        match job {
+            Job::Chat(turn) => {
+                let id = turn.turn;
+                match self.client() {
+                    Ok(http) => answer(&http, &turn, ui).await,
+                    Err(error) => {
+                        log::warn!("turn {id} failed: {error}");
+                        ui.send(Update::Failed { turn: id, error });
+                    }
+                }
+            }
+            Job::Listen(listen) => crate::voice::run(self, listen, ui).await,
+        }
     }
 }
 
 /// Serves requests until the UI drops its handle.
 pub async fn serve(requests: Receiver<Request>, ui: UiLink<Update>) {
-    serve_with(requests, ui, ProviderRunner { http: None }).await;
+    serve_with(requests, ui, ProviderRunner::default()).await;
 }
 
 async fn serve_with(
@@ -111,10 +206,12 @@ async fn serve_with(
             },
         };
         // A cancel with nothing running has nothing to do.
-        let Request::Chat(turn) = request else {
-            continue;
+        let job = match request {
+            Request::Chat(turn) => Job::Chat(turn),
+            Request::Listen(listen) => Job::Listen(listen),
+            Request::Cancel { .. } => continue,
         };
-        match run_cancellable(&mut runner, turn, &mut requests, &ui).await {
+        match run_cancellable(&mut runner, job, &mut requests, &ui).await {
             Outcome::Finished => {}
             Outcome::Cancelled { turn, at } => log::info!(
                 "turn {turn} cancelled {:.1} ms after the request; its HTTP request was dropped",
@@ -144,12 +241,12 @@ enum Outcome {
 /// time the caller logs it.
 async fn run_cancellable(
     runner: &mut impl TurnRunner,
-    turn: ChatTurn,
+    job: Job,
     requests: &mut Receiver<Request>,
     ui: &UiLink<Update>,
 ) -> Outcome {
-    let id = turn.turn;
-    let run = runner.run(turn, ui);
+    let id = job.id();
+    let run = runner.run(job, ui);
     tokio::pin!(run);
     loop {
         tokio::select! {
@@ -174,20 +271,10 @@ async fn run_cancellable(
     }
 }
 
-async fn run_turn(http: &mut Option<HttpClient>, turn: ChatTurn, ui: &UiLink<Update>) {
+/// Streams the reply to `turn` and reports how it ended.
+pub async fn answer(http: &HttpClient, turn: &ChatTurn, ui: &UiLink<Update>) {
     let id = turn.turn;
-    let http = match http {
-        Some(http) => http.clone(),
-        None => match HttpClient::new() {
-            Ok(client) => http.insert(client).clone(),
-            Err(error) => {
-                log::warn!("turn {id} failed: {error}");
-                ui.send(Update::Failed { turn: id, error });
-                return;
-            }
-        },
-    };
-    match chat(&http, &turn, ui).await {
+    match chat(http, turn, ui).await {
         Ok(reply) => {
             ui.send(Update::Done { turn: id, reply });
         }
@@ -331,7 +418,7 @@ async fn stream(
     Ok(())
 }
 
-fn read_key(name: KeyName) -> Result<Secret, ProviderError> {
+pub(crate) fn read_key(name: KeyName) -> Result<Secret, ProviderError> {
     match sohi_win::read_key(name.target()) {
         Ok(Some(key)) => Ok(key),
         Ok(None) => Err(ProviderError::MissingKey(name.as_str())),
@@ -367,10 +454,10 @@ mod tests {
     }
 
     impl TurnRunner for Hanging {
-        async fn run(&mut self, turn: ChatTurn, ui: &UiLink<Update>) {
+        async fn run(&mut self, job: Job, ui: &UiLink<Update>) {
             let _flag = SetOnDrop(Arc::clone(&self.dropped));
             ui.send(Update::Delta {
-                turn: turn.turn,
+                turn: job.id(),
                 text: "partial".into(),
             });
             std::future::pending::<()>().await;

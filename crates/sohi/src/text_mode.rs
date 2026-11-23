@@ -1,22 +1,27 @@
-//! Text mode: the pill, the Interaction region and text turns (spec §4.6,
-//! §5.2). Carries the region's effects out on the head, the pill and the
-//! runtime thread.
+//! The pill, the Interaction region and its turns, text and voice (spec
+//! §4.6, §5.2). Carries the region's effects out on the head, the pill and
+//! the runtime thread.
 //!
 //! The pill window and the runtime thread are created on first use. The
 //! pill is destroyed after 5 minutes hidden, to give its memory back.
 
 use std::time::{Duration, Instant};
 
+use sohi_core::config::SttConfig;
 use sohi_core::geometry::{BASE_DPI, RectPx};
 use sohi_core::history::History;
 use sohi_core::interaction::{ERROR_HOLD, Effect, Event, Interaction, State};
-use sohi_core::persona::text_system_prompt;
+use sohi_core::persona::{SPOKEN_NOTE, text_system_prompt};
 use sohi_core::pill::pill_origin;
 use sohi_core::visibility::{Input, Phase};
-use sohi_win::{AppTimer, EventQueue, PillWindow, RemoteWindow, TimerHost, WinEvent};
+use sohi_win::{
+    AppTimer, EventQueue, HotkeyHost, HotkeyRegistration, PillWindow, RemoteWindow, TimerHost,
+    WinEvent,
+};
 
-use crate::chat::{ChatTurn, Request, Update};
+use crate::chat::{ChatTurn, ListenTurn, Request, Update};
 use crate::head::Head;
+use crate::hotkeys;
 use crate::runtime::Runtime;
 
 /// App-window timer ids.
@@ -35,6 +40,10 @@ pub struct TextSettings {
     pub fallback_model: String,
     /// `[persona] user_name`.
     pub user_name: String,
+    /// `[stt]`.
+    pub stt: SttConfig,
+    /// `[wake] follow_up`.
+    pub follow_up: bool,
 }
 
 /// Text mode's state.
@@ -47,6 +56,10 @@ pub struct TextMode {
     queue: EventQueue,
     window: RemoteWindow,
     timers: TimerHost,
+    hotkeys: HotkeyHost,
+    /// Esc, held while a voice turn runs: the mic is open but no Sohi
+    /// window has the keyboard.
+    escape: Option<HotkeyRegistration>,
     pill_idle: Option<AppTimer>,
     error_hold: Option<AppTimer>,
     head_rect: RectPx,
@@ -60,10 +73,11 @@ impl TextMode {
         queue: EventQueue,
         window: RemoteWindow,
         timers: TimerHost,
+        hotkeys: HotkeyHost,
         settings: TextSettings,
     ) -> Self {
         Self {
-            interaction: Interaction::new(),
+            interaction: Interaction::new().with_follow_up(settings.follow_up),
             pill: None,
             runtime: None,
             history: History::new(),
@@ -71,6 +85,8 @@ impl TextMode {
             queue,
             window,
             timers,
+            hotkeys,
+            escape: None,
             pill_idle: None,
             error_hold: None,
             head_rect: RectPx::default(),
@@ -87,6 +103,20 @@ impl TextMode {
             for effect in self.interaction.step(event) {
                 pending.extend(self.apply(effect, head));
             }
+        }
+        self.sync_escape();
+    }
+
+    /// Holds Esc exactly while a voice turn runs.
+    fn sync_escape(&mut self) {
+        if !self.interaction.voice_active() {
+            self.escape = None;
+        } else if self.escape.is_none() {
+            self.escape = self
+                .hotkeys
+                .escape(hotkeys::ESCAPE)
+                .inspect_err(|err| log::warn!("Esc cannot stop listening: {err}"))
+                .ok();
         }
     }
 
@@ -125,6 +155,25 @@ impl TextMode {
         };
         for update in updates {
             let event = match update {
+                Update::Level { turn, level } => {
+                    if self.is_current(turn) {
+                        head.set_level(level);
+                    }
+                    continue;
+                }
+                Update::SpeechStarted { turn } => Event::SpeechStarted { turn },
+                Update::SpeechEnded { turn } => Event::SpeechEnded { turn },
+                Update::NoSpeech { turn } => Event::NoSpeech { turn },
+                Update::Transcript { turn, text } => {
+                    if self.is_current(turn) && !text.trim().is_empty() {
+                        self.history.push_user(text.trim().to_owned());
+                    }
+                    Event::Transcript { turn, text }
+                }
+                Update::MicFailed { turn } => Event::TurnFailed {
+                    turn,
+                    message: "Sohi couldn't use the microphone.".to_owned(),
+                },
                 Update::Delta { turn, text } => Event::LlmDelta { turn, text },
                 Update::Done { turn, reply } => {
                     if self.is_current(turn) {
@@ -149,7 +198,7 @@ impl TextMode {
     /// Whether `turn` is the one still waited for (older turns' updates
     /// are stale).
     fn is_current(&self, turn: u64) -> bool {
-        self.interaction.state() == (State::Thinking { turn })
+        self.interaction.current_turn() == Some(turn)
     }
 
     /// Handles an app-window timer. Returns `false` if it is not ours.
@@ -206,6 +255,7 @@ impl TextMode {
             Effect::SetBubble(text) => self.with_pill(|p| p.set_bubble(&text)),
             Effect::AppendBubble(text) => self.with_pill(|p| p.append_bubble(&text)),
             Effect::StartTurn { turn, text } => return self.start_turn(turn, text),
+            Effect::StartListening { turn } => return self.start_listening(turn),
             Effect::CancelTurn { turn } => self.cancel_turn(turn),
             Effect::SetVisual(visual) => head.set_visual(visual),
             Effect::FlashError => head.flash_error(),
@@ -261,13 +311,7 @@ impl TextMode {
     /// Hands the turn to the runtime thread, or returns its failure.
     fn start_turn(&mut self, turn: u64, text: String) -> Option<Event> {
         self.history.push_user(text);
-        let request = Request::Chat(ChatTurn {
-            turn,
-            model: self.settings.model.clone(),
-            fallback_model: self.settings.fallback_model.clone(),
-            system: text_system_prompt(&self.settings.user_name, &sohi_win::local_time()),
-            messages: self.history.messages(),
-        });
+        let request = Request::Chat(self.chat_turn(turn));
         let sent = self.runtime().map(|r| r.send(request));
         if matches!(sent, Some(Ok(()))) {
             return None;
@@ -278,6 +322,37 @@ impl TextMode {
             turn,
             message: "Sohi could not start that request. Try again.".to_owned(),
         })
+    }
+
+    /// Hands a voice turn to the runtime thread, or returns its failure.
+    /// The transcript joins the history when it arrives.
+    fn start_listening(&mut self, turn: u64) -> Option<Event> {
+        let mut chat = self.chat_turn(turn);
+        chat.system.push_str(SPOKEN_NOTE);
+        let request = Request::Listen(ListenTurn {
+            chat,
+            stt: self.settings.stt.clone(),
+        });
+        let sent = self.runtime().map(|r| r.send(request));
+        if matches!(sent, Some(Ok(()))) {
+            return None;
+        }
+        log::error!("cannot start voice turn {turn}: {sent:?}");
+        Some(Event::TurnFailed {
+            turn,
+            message: "Sohi could not start listening. Try again.".to_owned(),
+        })
+    }
+
+    /// A chat turn over the history as it stands.
+    fn chat_turn(&self, turn: u64) -> ChatTurn {
+        ChatTurn {
+            turn,
+            model: self.settings.model.clone(),
+            fallback_model: self.settings.fallback_model.clone(),
+            system: text_system_prompt(&self.settings.user_name, &sohi_win::local_time()),
+            messages: self.history.messages(),
+        }
     }
 
     fn cancel_turn(&mut self, turn: u64) {

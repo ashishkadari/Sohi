@@ -7,11 +7,18 @@ publish.workspace = true
 
 [dependencies]
 log.workspace = true
+sohi-audio.workspace = true
 sohi-core.workspace = true
 sohi-providers.workspace = true
 sohi-render.workspace = true
 sohi-win.workspace = true
 tokio.workspace = true
+
+[features]
+# A WAV file named by SOHI_DEV_INJECT replaces the mic (spec §10.6 P4).
+dev-inject = []
+# Saves each utterance to the folder named by SOHI_DEV_RECORD. Test builds only.
+dev-record = []
 
 [lints]
 workspace = true

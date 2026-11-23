@@ -65,7 +65,12 @@ plugin/MCP runtime · installer or auto-update · telemetry · draggable widget.
 | Head rendering | **`tiny-skia`** (CPU, `simd`) → premultiplied BGRA DIB → `UpdateLayeredWindow` | The surface is about 210×160 px at 150 % scaling, so CPU rasterization takes under 0.5 ms. No GPU device, swapchain or shader compiler, and no GPU memory while idle. |
 | Text pill UI | **Native Win32 `EDIT` controls** in a separate popup window, DWM rounded corners | Gives IME, caret, selection, clipboard, accessibility and Unicode for free. A hand-written text editor would be thousands of lines and a source of bugs. |
 | Audio I/O | **WASAPI directly via `windows`** (event-driven shared mode, `AUTOCONVERTPCM`) | The OS resamples to 16 kHz mono i16 for capture at no cost to us, so we need neither `cpal` nor a resampler crate. |
-| VAD | **WebRTC VAD** (`webrtc-vad`/libfvad binding, compiled with `cc`) **[VERIFY crate maintenance]** | About 50 KB, deterministic, no ML runtime, runs on 30 ms frames. |
+| VAD | **earshot** 1.2 (pure-Rust neural VAD, `default-features = false, features = ["std"]`) | About 95 KB, deterministic, no ML runtime or C build, runs on 16 ms frames. |
+
+> SPEC CHANGE (2026-11-22): the VAD is `earshot`, not WebRTC VAD. The `webrtc-vad` crate has had no release since
+> 2019 and needs a C toolchain; earshot is pure Rust, maintained, and more accurate on noisy speech. It costs about
+> 95 KB instead of about 50 KB. Its frames are 16 ms (256 samples), so the segmentation rules in §5.4 are restated
+> in those frames with the same timings.
 | Async runtime | **`tokio`** current-thread runtime, features `rt, net, time, sync, macros, io-util` | Needed for streaming HTTP (SSE/NDJSON), concurrent prewarming and cancellation. It runs on a single dedicated thread that starts lazily on first wake. |
 | HTTP/TLS | **`reqwest`** with `default-features = false`, features `native-tls, json, stream, multipart` | `native-tls` on Windows uses **SChannel**, so no crypto library is bundled. That is about 1.5–2 MB smaller than rustls with ring. |
 | Serialization | `serde`, `serde_json`, `toml` | Config and API payloads. |
@@ -78,7 +83,7 @@ plugin/MCP runtime · installer or auto-update · telemetry · draggable widget.
 ### 2.3 External services
 | Role | Primary (online) | Fallback |
 |---|---|---|
-| STT | Mistral **Voxtral** via `POST https://api.mistral.ai/v1/audio/transcriptions`, model `voxtral-mini-latest` **[VERIFY]** | None in v1 (offline means text input). Windows offline speech recognition is a possible later phase. |
+| STT | Mistral **Voxtral** via `POST https://api.mistral.ai/v1/audio/transcriptions`, model `voxtral-mini-transcribe-3` **[VERIFY]** | None in v1 (offline means text input). Windows offline speech recognition is a possible later phase. |
 | LLM | Mistral chat completions, model `mistral-small-latest`, streaming SSE, function calling **[VERIFY tool-call schema]** | Anthropic Messages API (model set in config, e.g. a Claude Haiku/Sonnet tier). Used when Mistral fails before writing any text and `anthropic_model` is set; a reply already under way is never restarted on another provider, and offline **Ollama** at `http://127.0.0.1:11434` (`/api/tags`, `/api/chat` NDJSON) |
 | TTS | `TtsProvider` trait. Default: Mistral Voxtral TTS **if available on the account [VERIFY endpoint, model, streaming format]**, otherwise any streaming cloud TTS set in config | OneCore offline voices |
 
@@ -153,7 +158,7 @@ cursor-poll timer (4 Hz) and messages. The runtime thread, once started, stays b
  Wake (corner dwell | hotkey)
    │
    ├─► UI: reveal animation ─────────────────────────────────────────────┐
-   ├─► Capture: open WASAPI 16k mono i16 ──► VAD (30 ms frames)           │
+   ├─► Capture: open WASAPI 16k mono i16 ──► VAD (16 ms frames)           │
    └─► Runtime: prewarm TLS (GET /v1/models, cached 60 s)                 │
                                                                           │
  VAD end-of-speech (700 ms hangover)                                      │
@@ -364,6 +369,24 @@ The `State` struct has three independent regions:
 | Any | Escape | – | Idle | CancelTurn, StopPlayback, CloseMic, HidePill, Retract |
 | Any active | ProviderError(e) | – | Error → (1.2 s) Idle or TextEntry | SetVisual(Error), AppendBubble(e.user_message()) |
 
+> SPEC CHANGE (2026-11-22): until TTS lands (P5), a voice turn's transcript and reply show in the pill, opened
+> without focus, and the turn ends in TextEntry like a text turn. An empty transcript shows "Didn't catch that." in
+> the pill under the 2.5 s reply-done retract rule (TextEntry rather than Idle, so Esc and the retract close the
+> pill). The connectivity guard on Wake{Voice} arrives with the Connectivity region; until then an offline voice
+> turn fails at transcription with the usual error.
+
+> SPEC CHANGE (2026-11-23): **follow-up.** With `[wake] follow_up = true` (the default), a finished voice reply goes
+> Thinking → Listening instead of TextEntry, with the reply still in the pill. 8 s of silence ends the conversation
+> (TextEntry, 10 s unfocused retract); clicking into the pill cancels the listening. A pill that is focused or holds
+> text gets no follow-up, and neither does a typed turn. From P5 the mic reopens only after playback ends.
+> **Name.** STT defaults to `voxtral-mini-transcribe-3` with `context_bias=Sohi`, and a spoken turn's system prompt
+> says the name may be misheard. On 12 synthesized clips with the name and 7 without: 11/12 right and 1/7 wrong,
+> against 5/12 and 0/7 for `voxtral-mini-latest` with no bias. Picked from several settings on these same clips.
+> On 7 clips of the user's voice: 7/7 right (5/7 without the bias). The name alone still comes back as "So he", so an
+> utterance that is only a misheard name, with or without a greeting, is corrected locally; longer ones never are.
+> **Esc.** While a voice turn runs no Sohi window has the keyboard, so plain Esc is registered as a global hotkey
+> for exactly that long. Other apps do not receive Esc meanwhile.
+
 ### 5.3 Connectivity transitions
 ~~~
                  request fails (DNS/connect/TLS/timeout)  or  NLM hint = no internet
@@ -394,11 +417,20 @@ The `State` struct has three independent regions:
   The capture thread is registered with MMCSS "Pro Audio". The mic opens **only after wake**, and the Windows mic
   privacy indicator is shown only while Listening.
 - The capture thread pushes 10 ms blocks into `rtrb`. **No allocation, no locks, no logging** inside the capture loop.
-- The processing side (runtime thread) assembles **30 ms frames (480 samples)** → WebRTC VAD mode 2:
-  - **Start of speech:** ≥ 3 of the last 5 frames voiced. Prepend a **300 ms pre-roll** ring.
-  - **End of speech:** 700 ms (≈ 23 frames) unvoiced after speech started.
+- The processing side (runtime thread) assembles **16 ms frames (256 samples)** → earshot (voiced at score ≥ 0.5):
+  - **Start of speech:** ≥ 6 of the last 10 frames voiced. Speech starts at the first voiced frame of that window,
+    moved back over directly preceding frames (at most 256 ms) that score ≥ 0.35 or are at least twice as loud as
+    the quietest frame so far: soft onsets such as /s/ and /h/ are not voiced. Prepend a **300 ms pre-roll** ring.
+  - **End of speech:** 700 ms (44 frames) unvoiced after speech started. Keep 160 ms of tail.
+  - **Too short:** under 250 ms of voiced frames (a cough, a click) is dropped and listening continues.
   - **Limits:** 8 s with no speech at all → `NoSpeechTimeout`. 30 s maximum utterance.
   - RMS level is sent to the UI at 30 Hz, decimated (not per frame).
+  - Acceptance: on the five fixtures in `crates/sohi-audio/tests/fixtures` (synthesized speech, padded, in quiet,
+    at about 20 dB SNR, and at −16 dB gain) start and end are within ±100 ms of the placed speech.
+
+  > SPEC CHANGE (2026-11-22): rules restated for earshot's 16 ms frames (were 3 of 5 × 30 ms; now 6 of 10 × 16 ms),
+  > plus the soft-onset rule, the 160 ms tail and the explicit 250 ms minimum. Measured: starts 0–48 ms after the
+  > placed speech, ends 10–96 ms after (the detector holds its score for a few frames once sound stops).
 - Encoding: in-memory WAV (RIFF header + PCM16), about 32 KB/s. Opus encoding is a possible later optimization behind a feature flag.
 - On `CloseMic`: stop and release the `IAudioClient` and the thread exits. The mic is fully released.
 
@@ -505,7 +537,7 @@ All measured on the **release** build by `cargo xtask perf` on a mid-range Win11
 | Idle wakeups | ≤ 5 per second while parked | ETW/`powercfg /energy` spot check per phase |
 | **Cold start** | **≤ 120 ms to armed, ≤ 200 ms to first visible peek frame** | Process creation time → named event `Sohi.Armed` / first `UpdateLayeredWindow` (perf mode) |
 | **Binary size** | **≤ 8 MB** (stretch goal ≤ 5 MB) | Stripped release `sohi.exe` |
-| Wake → mic capturing | ≤ 80 ms | Wake event → first captured buffer timestamp |
+| Wake → mic capturing | ≤ 350 ms | Wake event → first captured buffer timestamp |
 | Wake → reveal complete | ≤ 280 ms | Includes the 260 ms animation |
 | Corner dwell → wake | 350 ms ± 60 ms | Includes poll granularity once in the NEAR band |
 | **End of speech → first TTS audio** | **≤ 1.5 s p50, ≤ 2.5 s p95** (online) | VAD end-of-speech decision → first PCM sample submitted to WASAPI render |
@@ -583,7 +615,14 @@ Every phase also requires:
 - [ ] RAM after the pill is destroyed (5 min idle) returns to within 2 MB of the pre-pill value.
 
 ### P4
-- [ ] Wake → first captured buffer ≤ 80 ms (p95 over 20 trials).
+- [ ] Wake → first captured buffer ≤ 350 ms (p95 over 20 trials).
+
+  > SPEC CHANGE (2026-11-22): wake → mic capturing relaxed from 80 ms to 350 ms. The mic still opens only at wake
+  > (privacy indicator only while Listening). On SoundWire mics `IAudioClient::Initialize` takes 70–260 ms while the
+  > endpoint powers up (first packet 105–310 ms measured); keeping a stream initialized while idle would buy about
+  > 37 ms but risks the privacy indicator while idle. Anything said before the first packet is
+  > lost. In the second hand test (2026-11-23) speech was found as early as 256 ms into the audio,
+  > so a quick speaker can lose the first syllable.
 - [ ] The mic privacy indicator shows only while Listening.
 - [ ] Injected WAV fixtures: correct segmentation (start/end within ±100 ms of the labelled boundaries), cough-only clip ignored, silence clip → NoSpeechTimeout.
 - [ ] Voxtral transcript matches the fixtures (WER sanity check ≤ 15% on the 5 fixture clips).
@@ -651,6 +690,8 @@ Every phase also requires:
   UI → runtime: `tokio::sync::mpsc::Sender::try_send` (bounded 64). If it is full, drop non-critical events and log.
 - **Audio threads are real-time:** no allocation, no locks, no syscalls besides WASAPI, no logging. Communicate only through
   `rtrb` SPSC rings with fixed capacity (2 s). On overflow, drop the oldest data and increment an atomic counter that the runtime logs.
+  > SPEC CHANGE (2026-11-22): on overflow the capture ring drops the *newest* samples (what does not fit). The writer cannot
+  > discard the reader's oldest data without a lock; a reader 2 s behind has already broken the turn either way.
 - **Exactly one active Turn.** Starting a new turn cancels the previous one first and waits for its cleanup (≤ 30 ms).
 - **No busy-waiting and no `sleep` polling.** Timers exist only while their state requires them, and every timer has an owner that cancels it on state exit.
 - No `static mut`. Global state is limited to `OnceLock` for immutable config and logger handles.
@@ -838,6 +879,10 @@ minimum granularity, not a cap.
 
 ## Appendix A — [VERIFY] Register (check against current vendor docs before implementing)
 1. Voxtral transcription endpoint path, model ID (`voxtral-mini-latest`?), multipart field names, supported audio formats and size limits.
+   *(Verified 2026-11-22: `POST /v1/audio/transcriptions`, Bearer auth, multipart fields `file`, `model` and optional
+   `language` (ISO 639-1; left out to auto-detect); answer JSON `text`, `language`. `voxtral-mini-latest` is listed
+   for the account and transcribes the five P4 fixtures with 0/39 word errors in 215–393 ms; `voxtral-mini-transcribe-3`
+   scores the same. A WAV upload works; size limits not yet measured.)*
 2. Mistral TTS availability, endpoint, voice IDs, streaming support and output formats (PCM preferred). If unavailable, pick and document an alternative cloud TTS.
 3. Mistral function-calling schema and streaming tool-call delta format.
 4. Anthropic Messages API current model IDs and streaming event types for tool use. *(Text streaming verified 2026-11-22:
@@ -845,5 +890,6 @@ minimum granularity, not a cap.
    text in `content_block_delta`/`text_delta`, end at `message_stop`, mid-stream `error` events, `ping`. Current cheap tier:
    `claude-haiku-5-5`. Tool-use events still to verify in P7.)*
 5. Ollama `/api/chat` tool-calling support for the chosen offline model.
-6. Maintenance status of the `webrtc-vad` (or `fvad`) crate and whether it builds under MSVC.
+6. ~~Maintenance status of the `webrtc-vad` (or `fvad`) crate and whether it builds under MSVC.~~ *(Resolved
+   2026-11-22: unmaintained since 2019; replaced by `earshot`, see §2.2.)*
 7. `NotifyNetworkConnectivityHintChange` behaviour on Win11 builds in use.

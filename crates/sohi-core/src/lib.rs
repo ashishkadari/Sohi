@@ -8,6 +8,7 @@ pub mod geometry;
 pub mod history;
 pub mod hotkey;
 pub mod interaction;
+pub mod meter;
 pub mod motion;
 pub mod persona;
 pub mod pill;

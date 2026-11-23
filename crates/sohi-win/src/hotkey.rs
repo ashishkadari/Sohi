@@ -6,7 +6,7 @@ use sohi_core::hotkey::Hotkey;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, RegisterHotKey,
-    UnregisterHotKey,
+    UnregisterHotKey, VK_ESCAPE,
 };
 
 use crate::{AppWindow, WinError};
@@ -32,6 +32,33 @@ impl HotkeyRegistration {
         unsafe { RegisterHotKey(Some(hwnd), id, modifiers(*hotkey), hotkey.vk) }
             .map_err(|e| WinError::api("RegisterHotKey", &e))?;
         Ok(Self { hwnd, id })
+    }
+}
+
+/// Something that can own hotkeys registered later. Copy it freely; it is
+/// only valid on the UI thread while the app window exists.
+#[derive(Debug, Clone, Copy)]
+pub struct HotkeyHost(HWND);
+
+impl HotkeyHost {
+    /// The host for `window`.
+    #[must_use]
+    pub fn new(window: &AppWindow) -> Self {
+        Self(window.raw())
+    }
+
+    /// Takes plain Esc system-wide until dropped; presses arrive as
+    /// `WinEvent::Hotkey { id }` and reach no other app.
+    ///
+    /// # Errors
+    /// Returns [`WinError`] if another app already holds Esc.
+    pub fn escape(self, id: u16) -> Result<HotkeyRegistration, WinError> {
+        let id = i32::from(id);
+        // SAFETY: the app window lives for the whole message loop and
+        // belongs to this thread; the id is unique per window.
+        unsafe { RegisterHotKey(Some(self.0), id, MOD_NOREPEAT, u32::from(VK_ESCAPE.0)) }
+            .map_err(|e| WinError::api("RegisterHotKey", &e))?;
+        Ok(HotkeyRegistration { hwnd: self.0, id })
     }
 }
 

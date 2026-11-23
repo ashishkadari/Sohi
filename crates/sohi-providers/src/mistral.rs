@@ -76,6 +76,43 @@ impl Mistral {
             Err(ProviderError::Offline("the reply ended early".to_owned()))
         }
     }
+
+    /// The IDs of the models this key can use (`GET /v1/models`), waiting
+    /// at most `timeout`.
+    ///
+    /// # Errors
+    /// Returns a [`ProviderError`] if the request fails or the answer
+    /// cannot be read.
+    pub async fn models(
+        &self,
+        key: &Secret,
+        timeout: Duration,
+    ) -> Result<Vec<String>, ProviderError> {
+        let url = format!("{}/v1/models", self.base_url);
+        let exchange = async {
+            self.http
+                .get(&url, Auth::Bearer(key), timeout)
+                .await?
+                .bytes()
+                .await
+        };
+        let bytes = tokio::time::timeout(timeout, exchange)
+            .await
+            .map_err(|_| ProviderError::Offline("no model list in time".to_owned()))??;
+        let list: ModelList = serde_json::from_slice(&bytes)
+            .map_err(|e| ProviderError::BadResponse(format!("model list: {e}")))?;
+        Ok(list.data.into_iter().map(|m| m.id).collect())
+    }
+}
+
+#[derive(Deserialize)]
+struct ModelList {
+    data: Vec<Model>,
+}
+
+#[derive(Deserialize)]
+struct Model {
+    id: String,
 }
 
 #[derive(Serialize)]
@@ -261,6 +298,22 @@ mod tests {
     async fn a_rejected_key_is_an_auth_error() {
         let (result, _) = run(Reply::status(401, "{\"message\":\"Unauthorized\"}")).await;
         assert_eq!(result.unwrap_err(), ProviderError::Auth(401));
+    }
+
+    #[tokio::test]
+    async fn lists_model_ids() {
+        let server = serve_once(Reply::status(
+            200,
+            r#"{"object":"list","data":[{"id":"voxtral-mini-latest","object":"model"},{"id":"mistral-small-latest"}]}"#,
+        ))
+        .await;
+        let mistral = Mistral::new(HttpClient::new().unwrap(), server.url(""));
+        let key = Secret::from_input("sk-mistral").unwrap();
+        let ids = mistral.models(&key, Duration::from_secs(1)).await.unwrap();
+        assert_eq!(ids, ["voxtral-mini-latest", "mistral-small-latest"]);
+        let request = server.request().await;
+        assert!(request.starts_with("GET /v1/models HTTP/1.1"));
+        assert!(request.contains("authorization: Bearer sk-mistral\r\n"));
     }
 
     #[test]

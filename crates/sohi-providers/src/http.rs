@@ -65,10 +65,27 @@ impl HttpClient {
         body: Vec<u8>,
         first_byte: Duration,
     ) -> Result<Response, ProviderError> {
+        self.post(url, auth, "application/json", headers, body, first_byte)
+            .await
+    }
+
+    /// Like [`Self::post_json`] for a body of any `content_type`.
+    ///
+    /// # Errors
+    /// Returns a [`ProviderError`] like [`Self::post_json`].
+    pub async fn post(
+        &self,
+        url: &str,
+        auth: Auth<'_>,
+        content_type: &str,
+        headers: &[(&'static str, &'static str)],
+        body: Vec<u8>,
+        first_byte: Duration,
+    ) -> Result<Response, ProviderError> {
         let mut request = self
             .inner
             .post(url)
-            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_TYPE, content_type)
             .body(body);
         for &(name, value) in headers {
             request = request.header(name, value);

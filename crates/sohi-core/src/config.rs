@@ -68,6 +68,8 @@ pub struct WakeConfig {
     pub dwell_ms: u32,
     /// Minimum time after a retract before the corner can wake again.
     pub cooldown_ms: u32,
+    /// Whether the mic reopens after a voice reply.
+    pub follow_up: bool,
 }
 
 impl Default for WakeConfig {
@@ -78,6 +80,7 @@ impl Default for WakeConfig {
             corner_size_px: 8,
             dwell_ms: 350,
             cooldown_ms: 1500,
+            follow_up: true,
         }
     }
 }
@@ -191,7 +194,7 @@ impl Default for SttConfig {
     fn default() -> Self {
         Self {
             provider: "mistral".to_owned(),
-            model: "voxtral-mini-latest".to_owned(),
+            model: "voxtral-mini-transcribe-3".to_owned(),
             language: "auto".to_owned(),
         }
     }
