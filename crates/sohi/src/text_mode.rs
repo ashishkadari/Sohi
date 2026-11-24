@@ -12,7 +12,7 @@ mod remind;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use sohi_core::config::{SttConfig, ToolsConfig, TtsConfig};
+use sohi_core::config::{SoundsConfig, SttConfig, ToolsConfig, TtsConfig};
 use sohi_core::connectivity::{Connectivity, Event as NetEvent};
 use sohi_core::full::{Command, command};
 use sohi_core::geometry::{BASE_DPI, RectPx};
@@ -33,6 +33,7 @@ use crate::full_mode::FullMode;
 use crate::head::Head;
 use crate::hotkeys;
 use crate::runtime::Runtime;
+use crate::sounds::{Sounds, cue};
 use crate::ticker::Ticker;
 use remind::Reminding;
 
@@ -73,6 +74,8 @@ pub struct TextSettings {
     pub hotkey_text: String,
     /// `[reminders] speak`.
     pub speak_reminders: bool,
+    /// `[sounds]`.
+    pub sounds: SoundsConfig,
     /// The reminders.
     pub agenda: Agenda,
     /// Start forced offline.
@@ -91,6 +94,7 @@ pub struct TextMode {
     last_prompt: Option<String>,
     policy: Policy,
     reminding: Reminding,
+    sounds: Sounds,
     /// When the latest tool question was shown.
     asked: Instant,
     queue: EventQueue,
@@ -134,6 +138,7 @@ impl TextMode {
             last_prompt: None,
             policy: Policy::new(&settings.tools),
             reminding: Reminding::new(settings.agenda.clone(), settings.speak_reminders),
+            sounds: Sounds::new(settings.sounds.clone()),
             asked: Instant::now(),
             queue,
             window,
@@ -156,11 +161,16 @@ impl TextMode {
     /// Feeds an Interaction event and carries out the effects, including
     /// any follow-up events they cause.
     pub fn event(&mut self, event: Event, head: &mut Head) {
+        let before = self.interaction.state();
         let mut pending = vec![event];
         while let Some(event) = pending.pop() {
             for effect in self.interaction.step(event) {
                 pending.extend(self.apply(effect, head));
             }
+        }
+        let spoken = self.interaction.voice_active();
+        if let Some(sound) = cue(before, self.interaction.state(), spoken) {
+            self.sounds.play(sound);
         }
         self.sync_escape();
         self.settle_full(head);

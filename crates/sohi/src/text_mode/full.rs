@@ -5,6 +5,7 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use sohi_audio::sound::Sound;
 use sohi_core::chat::Role;
 use sohi_core::connectivity::State as Net;
 use sohi_core::full::{Command, command};
@@ -36,6 +37,9 @@ impl TextMode {
             Err(err) => return log::error!("cannot open full mode: {err}"),
         }
         log::info!("full mode: open (animated: {animated})");
+        if animated {
+            self.sounds.play(Sound::CapeOver);
+        }
         self.hide_pill();
         head.vanish();
         self.show_history();
@@ -59,6 +63,8 @@ impl TextMode {
         let animated = !head.reduced_motion();
         if self.full.as_mut().is_some_and(|f| !f.leave(animated)) {
             self.close_full(head);
+        } else if animated {
+            self.sounds.play(Sound::CapeBack);
         }
     }
 

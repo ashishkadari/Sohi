@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use sohi_core::config::{ReducedMotion, SttConfig, ToolsConfig, TtsConfig, WakeConfig};
+use sohi_core::config::{
+    ReducedMotion, SoundsConfig, SttConfig, ToolsConfig, TtsConfig, WakeConfig,
+};
 use sohi_core::connectivity::Event as NetEvent;
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::interaction::Event as TextEvent;
@@ -60,6 +62,8 @@ pub struct Options {
     pub tools: ToolsConfig,
     /// `[reminders] speak` from the config.
     pub speak_reminders: bool,
+    /// `[sounds]` from the config.
+    pub sounds: SoundsConfig,
 }
 
 impl Options {
@@ -75,6 +79,7 @@ impl Options {
             follow_up: self.wake.follow_up,
             hotkey_text: self.wake.hotkey_text.clone(),
             speak_reminders: self.speak_reminders,
+            sounds: self.sounds.clone(),
             agenda,
             forced_offline,
         }

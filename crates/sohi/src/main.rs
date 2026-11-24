@@ -20,6 +20,7 @@ mod probe;
 mod reply;
 mod runtime;
 mod set_key;
+mod sounds;
 mod speak;
 mod stt;
 mod text_mode;
@@ -182,6 +183,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         tts: config.tts.clone(),
         tools: config.tools.clone(),
         speak_reminders: config.reminders.speak,
+        sounds: config.sounds.clone(),
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {

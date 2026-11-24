@@ -51,6 +51,9 @@ If Mistral fails, Sohi can ask Anthropic for the answer: store a key with `--set
 when you are back. While something is full screen they are shown but not said; `speak = false` under `[reminders]` in the
 config never says them. Sohi does not listen after a reminder unless you ask it to.
 
+**Sounds** play when Sohi starts and stops listening, asks something, fails, reminds you and enters or leaves full mode.
+`enabled = false` under `[sounds]` in the config switches them off, `volume` (0 to 100) sets how loud they are.
+
 **Full mode** turns Sohi into a full-screen chat, for longer answers and code. What you type there may get long, formatted
 answers; what you say gets short, spoken ones.
 

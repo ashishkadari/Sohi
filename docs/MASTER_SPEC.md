@@ -584,6 +584,7 @@ never as instructions, and the system prompt says so.
 [tools]     confirm = ["clipboard_get"]   disabled = []
 [history]   persist = false
 [reminders] speak = true   # P10
+[sounds]    enabled = true   volume = 60   # P11
 [log]       level = "info"
 ~~~
 Keys are stored in Credential Manager under targets `Sohi/mistral`, `Sohi/anthropic`, `Sohi/tts`. To set one:
@@ -626,6 +627,19 @@ eminders.json`, plain text, written through a temporary file. A file that cannot
 - **Clock:** local wall-clock time ("at 9" means 9 on the clock). One timer, armed only while there are reminders, at most
   10 minutes long, so a changed clock is noticed. No reminders, no timer.
 - **Config:** `[reminders] speak = true`.
+
+### 5.11 Sounds (P11)
+> SPEC CHANGE (2026-11-24): added at the owner's request.
+
+- **When:** the mic opens (two rising notes), the utterance ended (a soft tick), a tool question waits, something failed,
+  a reminder is due (a chime, before it is said), the cape takes over and goes back (a dark, stuttering signal
+  that lands on the moment the screen is covered; almost nothing above 3 kHz, so it is not rough; none with reduced motion).
+- **Synthesized** in code (`sohi-audio::sound`), mono 24 kHz, made when played: no sound files, nothing kept.
+- **Never taken for speech:** only the sound of the mic opening may be heard by the mic. It is so short that the voice
+  detector discards it (tested); the question's sound is left out in voice turns, where the mic opens for the answer.
+- **Quiet:** a reminder makes no sound while something else is full screen (§5.10). A new sound replaces the one playing.
+  A sound never delays anything: it plays on a thread of its own (§5.5), which ends with it.
+- **Config:** `[sounds] enabled = true`, `volume = 60` (percent).
 
 ---
 
@@ -681,6 +695,7 @@ Each phase is broken into tasks. The task list and the commit for each task are 
 | **P8** | Hardening & release | Full budget pass and fixes, soak test (8 h parked + 60 injected turns), device hot-plug, Explorer restart, DPI/monitor changes, "Start with Windows" (`HKCU\...\Run`), portable zip via `xtask release`, README with setup and key instructions. |
 | **P9** | Full mode | Full-screen chat with Markdown and code (§4.9), the cape take-over and its way back, voice, typed and tray commands. Version 1.1.0. |
 | **P10** | Memory + reminders | Longer history in full mode (§5.5), reminders (§5.10). Version 1.2.0. |
+| **P11** | Sounds | Synthesized sounds (§5.11). Version 1.3.0. |
 
 ---
 
@@ -786,6 +801,10 @@ Every phase also requires:
 - [ ] Reminders are set, listed and cancelled by voice and typing, online and offline, and survive a restart.
 - [ ] A due reminder is shown, spoken and sent as a toast; never during a turn, never while nobody is there, never twice.
 - [ ] The mic does not open by itself after one. Without reminders there is no timer and the idle budgets of §6 hold.
+
+### P11
+- [ ] Each sound plays at its moment, once, within 100 ms; `enabled = false` silences all of them.
+- [ ] No sound is taken for an utterance, and no audio device stays open after one.
 
 ---
 
@@ -1022,6 +1041,12 @@ minimum granularity, not a cap.
 4. `feat(tools): reminder tools`
 5. `feat(app): announce reminders`
 6. `perf(p10): memory and reminders report`
+
+**P11 — Sounds → `v1.3.0`**
+1. `docs(spec): add sounds`
+2. `feat(audio): synthesized sounds`
+3. `feat(app): play sounds`
+4. `perf(p11): sounds report`
 
 ---
 
