@@ -56,7 +56,7 @@ pub struct MenuState {
     pub start_with_windows: bool,
 }
 
-/// The menu, in spec order. Features that don't exist yet are greyed out.
+/// The menu, in spec order.
 pub fn items(state: MenuState) -> [MenuItem<'static>; 9] {
     let cmd = |c: MenuCommand, label, enabled, checked| MenuItem::Command {
         id: c.id(),
@@ -79,7 +79,7 @@ pub fn items(state: MenuState) -> [MenuItem<'static>; 9] {
         cmd(
             MenuCommand::StartWithWindows,
             "Start with Windows",
-            false,
+            true,
             Some(state.start_with_windows),
         ),
         MenuItem::Separator,
@@ -117,7 +117,7 @@ mod tests {
     }
 
     #[test]
-    fn only_implemented_commands_are_enabled() {
+    fn every_command_is_enabled() {
         let enabled: Vec<_> = items(MenuState::default())
             .iter()
             .filter_map(|i| match i {
@@ -135,6 +135,7 @@ mod tests {
                 MenuCommand::ForceOffline,
                 MenuCommand::OpenConfig,
                 MenuCommand::OpenLogFolder,
+                MenuCommand::StartWithWindows,
                 MenuCommand::Quit
             ]
         );

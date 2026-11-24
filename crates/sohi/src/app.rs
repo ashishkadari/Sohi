@@ -57,6 +57,8 @@ pub struct Options {
     pub tools: ToolsConfig,
 }
 
+/// Name of the startup entry, as Settings shows it.
+const AUTOSTART_NAME: &str = "Sohi";
 /// Timer id, next to those of [`crate::text_mode`].
 const TIMER_TRAY: usize = 4;
 /// How long the taskbar gets before the tray icon is tried again.
@@ -318,6 +320,9 @@ impl App {
     }
 
     fn show_menu(&mut self, x: i32, y: i32) {
+        // It can be changed in Settings as well.
+        self.menu_state.start_with_windows = std::env::current_exe()
+            .is_ok_and(|exe| sohi_win::starts_with_windows(AUTOSTART_NAME, &exe));
         let items = tray_menu::items(self.menu_state);
         let chosen = self.tray.show_menu(&items, x, y);
         let Some(command) = chosen.and_then(MenuCommand::from_id) else {
@@ -341,7 +346,7 @@ impl App {
             MenuCommand::Talk => self.wake(true),
             MenuCommand::ForceOffline => self.toggle_offline(),
             MenuCommand::StartWithWindows => {
-                log::info!("{command:?} is not available yet");
+                toggle_autostart(self.menu_state.start_with_windows);
             }
         }
     }
@@ -371,6 +376,20 @@ impl App {
                 monitor.dpi
             );
         }
+    }
+}
+
+/// Has Windows start Sohi at sign-in, or no longer.
+fn toggle_autostart(on_now: bool) {
+    let result = std::env::current_exe()
+        .map_err(|err| err.to_string())
+        .and_then(|exe| {
+            sohi_win::set_starts_with_windows(AUTOSTART_NAME, &exe, !on_now)
+                .map_err(|err| err.to_string())
+        });
+    match result {
+        Ok(()) => log::info!("start with Windows: {}", !on_now),
+        Err(err) => log::warn!("cannot change start with Windows: {err}"),
     }
 }
 

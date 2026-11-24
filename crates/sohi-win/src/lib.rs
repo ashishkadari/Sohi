@@ -7,6 +7,7 @@
 mod apps;
 mod apptimer;
 mod audio;
+mod autostart;
 mod capture;
 mod clipboard;
 mod clock;
@@ -43,6 +44,7 @@ mod window;
 
 pub use apps::{app_paths, apps_folder};
 pub use apptimer::{AppTimer, TimerHost};
+pub use autostart::{set_starts_with_windows, starts_with_windows};
 pub use capture::Capture;
 pub use clipboard::{clipboard_text, set_clipboard_text};
 pub use clock::local_time;
