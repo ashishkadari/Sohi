@@ -45,7 +45,7 @@ struct Options {
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut opts = Options {
-        turns: 200,
+        turns: 60,
         hours: 8.0,
         wavs: Vec::new(),
         report: None,

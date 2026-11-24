@@ -618,7 +618,7 @@ Each phase is broken into tasks. The task list and the commit for each task are 
 | **P5** | TTS + speaking | `TtsProvider` trait, online streaming TTS **[VERIFY]**, OneCore offline TTS, WASAPI render thread, SentenceChunker + markdown stripper, envelope → visor, barge-in, half-duplex enforcement, full voice turn end-to-end. |
 | **P6** | Connectivity & offline | Connectivity region, IP Helper hint subscription, probes with backoff only while Shown, Force-offline toggle, Ollama detection + NDJSON provider, deterministic intent parser, offline visuals and pill placeholder, online-recovery-on-wake. |
 | **P7** | Tools & safety | Tool registry + JSON schemas for Mistral/Anthropic/Ollama, executors (launch_app index, open_url, clipboard, media, volume), policy engine + confirmation UI (keyboard + voice yes/no), `shell` feature (off by default), tool-call round trip in the orchestrator. |
-| **P8** | Hardening & release | Full budget pass and fixes, soak test (8 h parked + 200 injected turns), device hot-plug, Explorer restart, DPI/monitor changes, "Start with Windows" (`HKCU\...\Run`), portable zip via `xtask release`, README with setup and key instructions. |
+| **P8** | Hardening & release | Full budget pass and fixes, soak test (8 h parked + 60 injected turns), device hot-plug, Explorer restart, DPI/monitor changes, "Start with Windows" (`HKCU\...\Run`), portable zip via `xtask release`, README with setup and key instructions. |
 
 ---
 
@@ -700,7 +700,11 @@ Every phase also requires:
 
 ### P8
 - [ ] All Section 6 budgets pass, and the report is committed under `docs/perf/`.
-- [ ] 8 h parked soak: no RAM growth > 1 MB, CPU within budget. 200 injected turns: no leaks, no crashes.
+- [ ] 8 h parked soak: no RAM growth > 1 MB, CPU within budget. 60 injected turns: no leaks, no crashes.
+
+  > SPEC CHANGE (2026-11-24): 60 injected turns instead of 200. The turns use the owner's Mistral account, and a leak per
+  > turn shows within 60.
+
 - [ ] Survives: Explorer restart (tray returns), audio device unplug and replug, primary monitor swap, DPI change, sleep/resume.
 - [ ] "Start with Windows" toggle works. A portable zip runs on a clean Win11 VM with no runtime installs.
 - [ ] `v1.0.0` tag pushed. The README covers setup, key configuration, hotkeys and troubleshooting.
