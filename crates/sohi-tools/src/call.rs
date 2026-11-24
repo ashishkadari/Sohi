@@ -37,6 +37,12 @@ pub enum Call {
     Media(MediaAction),
     /// `volume`.
     Volume(VolumeAction),
+    /// `shell_exec`.
+    #[cfg(feature = "shell")]
+    ShellExec {
+        /// The command line.
+        command: String,
+    },
 }
 
 /// What a media key does.
@@ -117,6 +123,12 @@ impl Call {
                 "set" => VolumeAction::Set(percent(&args)?),
                 other => return Err(unknown_action(other)),
             }),
+            #[cfg(feature = "shell")]
+            Tool::ShellExec => {
+                let command = text(&args, "command")?.trim().to_owned();
+                crate::shell::check(&command)?;
+                Self::ShellExec { command }
+            }
         })
     }
 
@@ -130,6 +142,8 @@ impl Call {
             Self::ClipboardSet { .. } => Tool::ClipboardSet,
             Self::Media(_) => Tool::Media,
             Self::Volume(_) => Tool::Volume,
+            #[cfg(feature = "shell")]
+            Self::ShellExec { .. } => Tool::ShellExec,
         }
     }
 
@@ -150,6 +164,9 @@ impl Call {
             Self::Volume(VolumeAction::Up) => "volume up".to_owned(),
             Self::Volume(VolumeAction::Down) => "volume down".to_owned(),
             Self::Volume(VolumeAction::Set(level)) => format!("volume {level}%"),
+            // Checked to be one short visible line: shown whole.
+            #[cfg(feature = "shell")]
+            Self::ShellExec { command } => format!("command {command}"),
         }
     }
 }
@@ -202,19 +219,24 @@ fn unknown_action(action: &str) -> CallError {
 /// formatting characters become spaces, and a long text is cut.
 #[must_use]
 pub fn one_line(text: &str) -> String {
-    let mut line = String::new();
-    for (i, c) in text.trim().chars().enumerate() {
-        if i == SUMMARY_CHARS {
-            line.push('…');
-            break;
-        }
-        line.push(if c.is_control() || is_invisible(c) {
-            ' '
-        } else {
-            c
-        });
+    let text = text.trim();
+    match text.char_indices().nth(SUMMARY_CHARS) {
+        Some((cut, _)) => visible(text.get(..cut).unwrap_or_default()) + "…",
+        None => visible(text),
     }
-    line
+}
+
+/// `text` with spaces for control and invisible characters.
+pub(crate) fn visible(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() || is_invisible(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect()
 }
 
 /// Characters that could make a summary read differently from what runs:

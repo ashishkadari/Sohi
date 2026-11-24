@@ -16,6 +16,8 @@ sohi-win.workspace = true
 tokio.workspace = true
 
 [features]
+# The shell_exec tool (spec §5.6). Never part of a release.
+shell = ["sohi-tools/shell"]
 # A WAV file named by SOHI_DEV_INJECT replaces the mic (spec §10.6 P4).
 dev-inject = []
 # Saves each utterance to the folder named by SOHI_DEV_RECORD. Test builds only.

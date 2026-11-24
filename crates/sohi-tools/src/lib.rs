@@ -10,6 +10,8 @@ mod executor;
 mod fake;
 mod policy;
 mod registry;
+#[cfg(feature = "shell")]
+pub mod shell;
 pub mod url;
 
 pub use call::{Call, CallError, MediaAction, VolumeAction, one_line};

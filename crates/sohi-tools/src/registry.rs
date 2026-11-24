@@ -17,6 +17,9 @@ pub enum Tool {
     Media,
     /// Changes the volume.
     Volume,
+    /// Runs a command.
+    #[cfg(feature = "shell")]
+    ShellExec,
 }
 
 impl Tool {
@@ -28,6 +31,8 @@ impl Tool {
         Self::ClipboardSet,
         Self::Media,
         Self::Volume,
+        #[cfg(feature = "shell")]
+        Self::ShellExec,
     ];
 
     /// The name models call it by, also used in `[tools]`.
@@ -40,6 +45,8 @@ impl Tool {
             Self::ClipboardSet => "clipboard_set",
             Self::Media => "media",
             Self::Volume => "volume",
+            #[cfg(feature = "shell")]
+            Self::ShellExec => "shell_exec",
         }
     }
 
@@ -77,6 +84,11 @@ impl Tool {
                 "Change the PC's volume: one step up or down, or set it to a level. One step is 10 percent.",
                 r#"{"type":"object","properties":{"action":{"type":"string","enum":["up","down","set"]},"level":{"type":"integer","minimum":0,"maximum":100,"description":"Percent; only for set"}},"required":["action"]}"#,
             ),
+            #[cfg(feature = "shell")]
+            Self::ShellExec => (
+                "Run a command with cmd.exe and return its output. One line, at most 300 characters. The user is always asked first.",
+                r#"{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}"#,
+            ),
         };
         ToolSpec {
             name: self.name(),
@@ -98,6 +110,7 @@ mod tests {
         }
         assert_eq!(Tool::named("format_disk"), None);
         assert_eq!(Tool::named(""), None);
+        assert_eq!(Tool::named("shell_exec").is_some(), cfg!(feature = "shell"));
     }
 
     #[test]

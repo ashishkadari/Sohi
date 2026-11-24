@@ -112,7 +112,7 @@ impl Gate<'_> {
         if self.policy.disabled.contains(&tool) {
             return Verdict::Refuse(Outcome::failed("this tool is switched off"));
         }
-        if self.tainted || self.policy.confirm.contains(&tool) {
+        if self.tainted || always_asks(tool) || self.policy.confirm.contains(&tool) {
             return Verdict::Ask(Question(call));
         }
         Verdict::Allow(Permit(call))
@@ -122,6 +122,17 @@ impl Gate<'_> {
     pub fn saw(&mut self, outcome: &Outcome) {
         self.tainted |= outcome.untrusted.is_some();
     }
+}
+
+/// Tools no setting can run unasked.
+#[cfg(feature = "shell")]
+fn always_asks(tool: Tool) -> bool {
+    tool == Tool::ShellExec
+}
+
+#[cfg(not(feature = "shell"))]
+fn always_asks(_tool: Tool) -> bool {
+    false
 }
 
 #[cfg(test)]
@@ -175,6 +186,21 @@ mod tests {
         assert!(matches!(gate.judge(open_url()), Verdict::Ask(_)));
         // The next turn starts afresh.
         assert!(matches!(policy.gate().judge(open_url()), Verdict::Allow(_)));
+    }
+
+    #[test]
+    #[cfg(feature = "shell")]
+    fn commands_always_ask() {
+        let policy = Policy::new(&config(&[], &[]));
+        let command = "dir".to_owned();
+        let Verdict::Ask(question) = policy.gate().judge(Call::ShellExec { command }) else {
+            panic!("not asked");
+        };
+        assert_eq!(question.summary(), "command dir");
+        let policy = Policy::new(&config(&[], &["shell_exec"]));
+        let command = "dir".to_owned();
+        let verdict = policy.gate().judge(Call::ShellExec { command });
+        assert!(matches!(verdict, Verdict::Refuse(_)));
     }
 
     #[test]

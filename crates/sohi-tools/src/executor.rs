@@ -93,6 +93,8 @@ impl<D: Desktop> Executor<D> {
             Call::ClipboardSet { text } => self.clipboard_set(text),
             Call::Media(action) => self.media(*action),
             Call::Volume(action) => self.volume(*action),
+            #[cfg(feature = "shell")]
+            Call::ShellExec { command } => shell_exec(command),
         }
     }
 
@@ -163,6 +165,21 @@ impl<D: Desktop> Executor<D> {
             Ok(()) => Outcome::done(format!("Opened {}.", one_line(&app.name))),
             Err(why) => Outcome::failed(format!("Opening {} failed: {why}.", one_line(&app.name))),
         }
+    }
+}
+
+#[cfg(feature = "shell")]
+fn shell_exec(command: &str) -> Outcome {
+    match crate::shell::run(command) {
+        Ok(ran) => Outcome {
+            ok: ran.code == Some(0),
+            message: match ran.code {
+                Some(code) => format!("The command ended with code {code}."),
+                None => "The command was stopped after 15 seconds.".to_owned(),
+            },
+            untrusted: Some(ran.output),
+        },
+        Err(why) => Outcome::failed(format!("The command did not run: {why}.")),
     }
 }
 
