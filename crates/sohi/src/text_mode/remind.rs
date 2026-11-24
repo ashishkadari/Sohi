@@ -110,8 +110,8 @@ impl TextMode {
         }
         let due = self.reminding.agenda.take_due(now);
         let text = announce(&due, now);
-        // Full mode itself is full screen, too.
-        let ours = self.full.as_ref().is_some_and(FullMode::is_front);
+        // Full mode itself is full screen, too, even behind a window.
+        let ours = self.is_full();
         let aloud = self.reminding.speak && (ours || sohi_win::shell::do_not_disturb().is_none());
         log::info!("{} reminder(s) due (aloud: {aloud})", due.len());
         self.history.push_user(CAME_DUE);
