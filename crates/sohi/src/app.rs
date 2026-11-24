@@ -233,6 +233,7 @@ impl App {
                 log::info!("network hint: internet {internet}");
                 self.text.net(NetEvent::Hint { internet }, &mut self.head);
             }
+            WinEvent::Full(event) => log::debug!("full mode: {event:?}"),
             WinEvent::HeadHover(over) => {
                 log::debug!("head hover: {over}");
                 self.head.input(Input::Hover(over));

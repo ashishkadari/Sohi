@@ -360,12 +360,12 @@ unsafe fn place(hwnd: HWND, r: RectPx) {
     };
 }
 
-fn window_text_len(hwnd: HWND) -> usize {
+pub(crate) fn window_text_len(hwnd: HWND) -> usize {
     // SAFETY: any window handle is accepted.
     usize::try_from(unsafe { GetWindowTextLengthW(hwnd) }).unwrap_or(0)
 }
 
-fn window_text(hwnd: HWND) -> String {
+pub(crate) fn window_text(hwnd: HWND) -> String {
     let mut buffer = vec![0u16; window_text_len(hwnd) + 1];
     // SAFETY: `buffer` has room for the text and its terminator.
     let copied = unsafe { GetWindowTextW(hwnd, &mut buffer) };

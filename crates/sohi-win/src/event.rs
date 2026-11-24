@@ -12,6 +12,23 @@ use std::rc::Rc;
 
 use crate::Presence;
 
+/// What the user does in the full mode window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FullEvent {
+    /// Enter in the input: fetch the text with `take_input`.
+    Submit,
+    /// Esc.
+    Escape,
+    /// The Talk button or Ctrl+M.
+    Talk,
+    /// The Copy code button or Ctrl+Shift+C.
+    CopyCode,
+    /// The New chat button or Ctrl+N.
+    NewChat,
+    /// The Exit button or Alt+F4.
+    Exit,
+}
+
 /// Something the UI thread needs to react to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WinEvent {
@@ -70,6 +87,8 @@ pub enum WinEvent {
     PillRecall,
     /// The pill gained (`true`) or lost (`false`) keyboard focus.
     PillFocus(bool),
+    /// Something in the full mode window.
+    Full(FullEvent),
     /// An app timer started with [`TimerHost`](crate::TimerHost) fired.
     Timer {
         /// Its id.
