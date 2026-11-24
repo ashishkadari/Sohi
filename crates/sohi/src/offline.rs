@@ -75,7 +75,7 @@ async fn generate(
     on_delta(&match command.map(Command::from) {
         None => intent::UNKNOWN_REPLY.to_owned(),
         Some(Command::Time) => say_time(sohi_win::local_time()),
-        Some(Command::Tool(call)) => actions.execute(call, "").await.message,
+        Some(Command::Tool(call)) => actions.execute(call).await.message,
     });
     log::info!("turn {} answered locally", turn.turn);
     Ok(())

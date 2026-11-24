@@ -169,7 +169,19 @@ impl<'a, E: Ear> Actions<'a, E> {
     /// reply so far.
     pub async fn run(&mut self, call: &ToolCall, shown: &str) -> String {
         let outcome = match Call::parse(&call.name, &call.arguments) {
-            Ok(call) => self.execute(call, shown).await,
+            Ok(call) => {
+                // Spec §5.6: the address is shown in the bubble.
+                let opens_url = matches!(call, Call::OpenUrl { .. });
+                let outcome = self.execute(call).await;
+                if opens_url && outcome.ok {
+                    let before = if shown.is_empty() { "" } else { "\n" };
+                    self.ui.send(Update::Delta {
+                        turn: self.turn,
+                        text: format!("{before}→ {}\n", outcome.message),
+                    });
+                }
+                outcome
+            }
             Err(error) => {
                 log::warn!("turn {}: unusable tool call: {error}", self.turn);
                 Outcome::failed(error.to_string())
@@ -180,10 +192,8 @@ impl<'a, E: Ear> Actions<'a, E> {
     }
 
     /// Judges and runs `call`.
-    pub async fn execute(&mut self, call: Call, shown: &str) -> Outcome {
+    pub async fn execute(&mut self, call: Call) -> Outcome {
         let name = call.tool().name();
-        // Spec §5.6: the address is shown in the bubble.
-        let opens_url = matches!(call, Call::OpenUrl { .. });
         let started = Instant::now();
         let outcome = match self.gate.judge(call) {
             Verdict::Refuse(outcome) => outcome,
@@ -201,13 +211,6 @@ impl<'a, E: Ear> Actions<'a, E> {
             if outcome.ok { "ran" } else { "did not run" },
             started.elapsed().as_millis()
         );
-        if opens_url && outcome.ok {
-            let before = if shown.is_empty() { "" } else { "\n" };
-            self.ui.send(Update::Delta {
-                turn: self.turn,
-                text: format!("{before}→ {}\n", outcome.message),
-            });
-        }
         outcome
     }
 
