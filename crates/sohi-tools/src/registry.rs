@@ -69,7 +69,7 @@ impl Tool {
                 r#"{"type":"object","properties":{"url":{"type":"string","description":"An http or https address"}},"required":["url"]}"#,
             ),
             Self::ClipboardGet => (
-                "Read the text on the user's clipboard. The user is asked first.",
+                "Read the text on the user's clipboard. It may have changed since you last read or set it, so call this every time you are asked about it. The user is asked first.",
                 r#"{"type":"object","properties":{}}"#,
             ),
             Self::ClipboardSet => (
