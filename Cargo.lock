@@ -828,8 +828,10 @@ dependencies = [
 name = "sohi-tools"
 version = "0.0.0"
 dependencies = [
+ "log",
  "serde_json",
  "sohi-core",
+ "sohi-win",
 ]
 
 [[package]]

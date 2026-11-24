@@ -505,6 +505,10 @@ Confirmation flow: the pill shows `Run: <summary>? Enter = Yes · Esc = No`. A v
 for 4 s (STT + a fixed yes/no matcher). Silence or a 10 s timeout counts as **No**. Tool outputs are passed to the LLM as **data**,
 never as instructions, and the system prompt says so.
 
+> SPEC CHANGE (2026-11-24): the app index also reads the shell's apps folder (`shell:AppsFolder`). On the dev laptop about
+> 60 of 220 Start Menu entries have no `.lnk` (Calculator, Settings, Photos and every other Store app). Uninstallers are
+> left out of the index, and `App Paths` entries are found only by their exact name.
+
 ### 5.7 Config & secrets
 `%APPDATA%\Sohi\config.toml`. On first run, write it with defaults and comments. The config is re-read when the user picks
 "Open config" and the file's mtime has changed (no file watcher).

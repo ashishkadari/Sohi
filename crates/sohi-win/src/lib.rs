@@ -4,6 +4,7 @@
 //! Every `unsafe` block needs a `// SAFETY:` comment, and the crate exposes
 //! safe RAII wrappers to the rest of the workspace.
 
+mod apps;
 mod apptimer;
 mod audio;
 mod capture;
@@ -35,6 +36,7 @@ mod timer;
 mod tray;
 mod window;
 
+pub use apps::{app_paths, apps_folder};
 pub use apptimer::{AppTimer, TimerHost};
 pub use capture::Capture;
 pub use clock::local_time;
