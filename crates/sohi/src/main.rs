@@ -24,6 +24,7 @@ mod stt;
 mod text_mode;
 mod tray_menu;
 mod voice;
+mod yes_no;
 
 use std::process::ExitCode;
 use std::time::Duration;

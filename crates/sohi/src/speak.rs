@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use sohi_audio::playback::{PlaybackMeter, PlaybackWriter, playback_ring};
-use sohi_core::config::TtsConfig;
+use sohi_core::config::{SttConfig, TtsConfig};
 use sohi_core::secret::KeyName;
 use sohi_core::speech::SentenceChunker;
 use sohi_providers::{
@@ -24,55 +24,76 @@ use sohi_providers::{
 use sohi_win::Playback;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
-use crate::actions::{Actions, NoEar, Toolbox};
+use crate::actions::{Actions, Toolbox};
 use crate::chat::{ChatTurn, Update};
 use crate::reply::{chat, read_key};
 use crate::runtime::UiLink;
+use crate::yes_no::VoiceEar;
 
 /// How often speech is fed to the render thread and its state checked.
 const TICK: Duration = Duration::from_millis(16);
 /// Synthesis pauses while this much speech is waiting to be played.
 const AHEAD: Duration = Duration::from_secs(15);
 
-/// Answers `turn` in the pill and aloud, and reports how it ended.
-/// `heard_at` is when the user stopped speaking, for the latency log.
-pub async fn answer_aloud(
-    http: &HttpClient,
-    turn: &ChatTurn,
-    tts: &TtsConfig,
-    heard_at: Instant,
-    toolbox: &Toolbox,
-    ui: &UiLink<Update>,
-) {
+/// A voice turn to answer.
+pub struct Aloud<'a> {
+    /// For the models and the speech.
+    pub http: &'a HttpClient,
+    /// The conversation, ending with what the user said.
+    pub turn: &'a ChatTurn,
+    /// `[stt]`, for spoken answers to questions.
+    pub stt: &'a SttConfig,
+    /// `[tts]`.
+    pub tts: &'a TtsConfig,
+    /// When the user stopped speaking, for the latency log.
+    pub heard_at: Instant,
+    /// What tools run on.
+    pub toolbox: &'a Toolbox,
+}
+
+/// Answers a turn in the pill and aloud, and reports how it ended.
+pub async fn answer_aloud(aloud: Aloud<'_>, ui: &UiLink<Update>) {
+    let Aloud { http, turn, .. } = aloud;
     let id = turn.turn;
     let (sentences_tx, sentences) = unbounded_channel();
     let chunker = RefCell::new(SentenceChunker::new());
+    let speech = Speech::default();
+    let say = |sentences: Vec<String>| {
+        for sentence in sentences {
+            speech.unsaid.update(|n| n + 1);
+            let _ = sentences_tx.send(sentence);
+        }
+    };
+    let flush = || say(chunker.borrow_mut().flush());
     let write = async {
         let on_text = |delta: &str| {
             ui.send(Update::Delta {
                 turn: id,
                 text: delta.to_owned(),
             });
-            for sentence in chunker.borrow_mut().push(delta) {
-                let _ = sentences_tx.send(sentence);
-            }
+            say(chunker.borrow_mut().push(delta));
         };
-        let mut actions = Actions::new(id, &turn.policy, toolbox, ui, NoEar);
+        let ear = VoiceEar {
+            turn: id,
+            http,
+            stt: aloud.stt,
+            speech: &speech,
+            flush: &flush,
+        };
+        let mut actions = Actions::new(id, &turn.policy, aloud.toolbox, ui, ear);
         let reply = chat(http, turn, &mut actions, &on_text).await?;
-        for sentence in chunker.borrow_mut().flush() {
-            let _ = sentences_tx.send(sentence);
-        }
+        flush();
         ui.send(Update::Done { turn: id, reply });
         // Nothing more to say: lets the synthesis end.
-        drop(sentences_tx);
+        let _ = sentences_tx.send(String::new());
         Ok::<(), ProviderError>(())
     };
-    let voice = Voice::new(http, tts);
-    let say = async {
-        speak(id, voice, sentences, heard_at, ui).await;
+    let voice = Voice::new(http, aloud.tts);
+    let heard = async {
+        speak(id, voice, sentences, aloud.heard_at, &speech, ui).await;
         Ok(())
     };
-    match tokio::try_join!(write, say) {
+    match tokio::try_join!(write, heard) {
         Ok(_) => {
             ui.send(Update::PlaybackDone { turn: id });
         }
@@ -83,25 +104,50 @@ pub async fn answer_aloud(
     }
 }
 
+/// What the speaking side knows about what is being said.
+#[derive(Default)]
+pub struct Speech {
+    queue: Queue,
+    /// Sentences that are not synthesized yet.
+    unsaid: Cell<usize>,
+    /// Samples wait in the device's ring.
+    pending: Cell<bool>,
+    /// Nothing more will be queued.
+    complete: Cell<bool>,
+    /// The UI must be told again when speech goes on.
+    resume: Cell<bool>,
+}
+
+impl Speech {
+    /// Whether everything written so far was said.
+    pub fn is_quiet(&self) -> bool {
+        self.unsaid.get() == 0 && self.queue.borrow().is_empty() && !self.pending.get()
+    }
+
+    /// Reports the next speech as [`Update::SpeakingStarted`] again.
+    pub fn will_resume(&self) {
+        self.resume.set(true);
+    }
+}
+
 /// Synthesizes the sentences and plays them until all was heard.
 async fn speak(
     turn: u64,
     voice: Voice,
     sentences: UnboundedReceiver<String>,
     heard_at: Instant,
+    speech: &Speech,
     ui: &UiLink<Update>,
 ) {
-    let queue = RefCell::new(VecDeque::new());
-    let complete = Cell::new(false);
-    let mut speaker = Speaker::new(turn, heard_at, &queue, &complete, ui);
+    let mut speaker = Speaker::new(turn, heard_at, speech, ui);
     if let Some(rate) = voice.expected_rate() {
         // Opening the device takes about 300 ms: do it while the model
         // thinks.
         speaker.open(rate);
     }
     let synthesize = async {
-        synthesize(turn, voice, sentences, &queue).await;
-        complete.set(true);
+        synthesize(turn, voice, sentences, speech).await;
+        speech.complete.set(true);
     };
     tokio::join!(synthesize, speaker.run());
 }
@@ -133,9 +179,14 @@ async fn synthesize(
     turn: u64,
     mut voice: Voice,
     mut sentences: UnboundedReceiver<String>,
-    queue: &Queue,
+    speech: &Speech,
 ) {
+    let queue = &speech.queue;
     while let Some(sentence) = sentences.recv().await {
+        // Nothing more to come.
+        if sentence.is_empty() {
+            return;
+        }
         while waiting(queue) > AHEAD {
             tokio::time::sleep(TICK).await;
         }
@@ -150,6 +201,7 @@ async fn synthesize(
                 asked.elapsed().as_millis()
             );
         }
+        speech.unsaid.update(|n| n.saturating_sub(1));
         let Err(error) = said else {
             continue;
         };
@@ -280,9 +332,7 @@ impl TtsProvider for OfflineVoice {
 struct Speaker<'a> {
     turn: u64,
     heard_at: Instant,
-    queue: &'a Queue,
-    /// Whether nothing more will be queued.
-    complete: &'a Cell<bool>,
+    speech: &'a Speech,
     ui: &'a UiLink<Update>,
     output: Option<Output>,
     /// Whether speech was heard in this turn.
@@ -299,18 +349,11 @@ struct Output {
 }
 
 impl<'a> Speaker<'a> {
-    fn new(
-        turn: u64,
-        heard_at: Instant,
-        queue: &'a Queue,
-        complete: &'a Cell<bool>,
-        ui: &'a UiLink<Update>,
-    ) -> Self {
+    fn new(turn: u64, heard_at: Instant, speech: &'a Speech, ui: &'a UiLink<Update>) -> Self {
         Self {
             turn,
             heard_at,
-            queue,
-            complete,
+            speech,
             ui,
             output: None,
             speaking: false,
@@ -340,15 +383,23 @@ impl<'a> Speaker<'a> {
         loop {
             tick.tick().await;
             self.report();
-            if self.feed() {
+            let done = self.feed();
+            self.speech.pending.set(self.is_pending());
+            if done {
                 break;
             }
         }
+        self.speech.pending.set(false);
         // A silent device cannot end while speech is still being made.
-        while !self.complete.get() {
-            self.queue.borrow_mut().clear();
+        while !self.speech.complete.get() {
+            self.speech.queue.borrow_mut().clear();
             tick.tick().await;
         }
+    }
+
+    fn is_pending(&self) -> bool {
+        let writer = self.output.as_ref().and_then(|o| o.writer.as_ref());
+        writer.is_some_and(PlaybackWriter::is_pending)
     }
 
     /// Tells the UI the level, and that speech started.
@@ -368,6 +419,10 @@ impl<'a> Speaker<'a> {
             );
             self.ui.send(Update::SpeakingStarted { turn: self.turn });
         }
+        if self.speech.resume.get() && self.speech.pending.get() {
+            self.speech.resume.set(false);
+            self.ui.send(Update::SpeakingStarted { turn: self.turn });
+        }
         self.ui.send(Update::Level {
             turn: self.turn,
             level: output.meter.rms(),
@@ -376,7 +431,7 @@ impl<'a> Speaker<'a> {
 
     /// Moves speech to the device; true once there is nothing left to do.
     fn feed(&mut self) -> bool {
-        let next_rate = self.queue.borrow().front().map(|p| p.rate);
+        let next_rate = self.speech.queue.borrow().front().map(|p| p.rate);
         let Some(output) = &mut self.output else {
             return match next_rate {
                 Some(rate) => {
@@ -384,7 +439,7 @@ impl<'a> Speaker<'a> {
                     // Without a device there is nothing to wait for.
                     self.output.is_none()
                 }
-                None => self.complete.get(),
+                None => self.speech.complete.get(),
             };
         };
         match next_rate {
@@ -398,7 +453,7 @@ impl<'a> Speaker<'a> {
             }
             Some(_) => match &mut output.writer {
                 Some(writer) if !writer.is_closed() => {
-                    fill(writer, &mut self.queue.borrow_mut());
+                    fill(writer, &mut self.speech.queue.borrow_mut());
                     false
                 }
                 _ => {
@@ -406,7 +461,7 @@ impl<'a> Speaker<'a> {
                     true
                 }
             },
-            None if self.complete.get() => {
+            None if self.speech.complete.get() => {
                 output.writer = None;
                 output.playback.is_finished()
             }
@@ -479,6 +534,22 @@ mod tests {
         assert_eq!(waiting(&queue), Duration::from_millis(1_500));
     }
 
+    #[test]
+    fn quiet_means_everything_was_said() {
+        let speech = Speech::default();
+        assert!(speech.is_quiet());
+        speech.unsaid.set(1);
+        assert!(!speech.is_quiet());
+        speech.queue.borrow_mut().push_back(piece(1_000, 5));
+        speech.unsaid.set(0);
+        assert!(!speech.is_quiet());
+        speech.queue.borrow_mut().clear();
+        speech.pending.set(true);
+        assert!(!speech.is_quiet());
+        speech.pending.set(false);
+        assert!(speech.is_quiet());
+    }
+
     /// Offline speech end to end: synthesized by Windows, played on the
     /// real device, with no network involved (audible: one short word).
     #[tokio::test]
@@ -493,7 +564,7 @@ mod tests {
         tx.send("Ready.".to_owned()).unwrap();
         drop(tx);
         let started = Instant::now();
-        speak(1, voice, rx, started, &ui).await;
+        speak(1, voice, rx, started, &Speech::default(), &ui).await;
         println!("spoken in {:?}", started.elapsed());
         let updates: Vec<Update> = updates.try_iter().collect();
         assert!(matches!(

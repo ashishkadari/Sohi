@@ -157,6 +157,7 @@ pub struct Segmenter<V> {
     audio: VecDeque<i16>,
     /// Samples not yet making up a whole frame.
     partial: Vec<i16>,
+    min_speech_ms: u32,
 }
 
 impl<V: VoiceDetector> Segmenter<V> {
@@ -172,7 +173,16 @@ impl<V: VoiceDetector> Segmenter<V> {
             level: 0.0,
             audio: VecDeque::with_capacity(WAITING_SAMPLES),
             partial: Vec::with_capacity(FRAME),
+            min_speech_ms: MIN_SPEECH_MS,
         }
+    }
+
+    /// Keeps utterances with at least `ms` of voice, instead of
+    /// [`MIN_SPEECH_MS`].
+    #[must_use]
+    pub fn with_min_speech_ms(mut self, ms: u32) -> Self {
+        self.min_speech_ms = ms;
+        self
     }
 
     /// Whether listening is over (an utterance ended, or no speech came).
@@ -301,7 +311,7 @@ impl<V: VoiceDetector> Segmenter<V> {
             return None;
         }
         let voiced_ms = voiced * FRAME_MS;
-        if voiced_ms < MIN_SPEECH_MS {
+        if voiced_ms < self.min_speech_ms {
             self.phase = Phase::Waiting;
             self.recent = 0;
             self.onset = 0;
@@ -501,6 +511,14 @@ mod tests {
         assert_eq!(events[1], Segment::Discarded { voiced_ms: 160 });
         assert_eq!(events[2], Segment::Started { at_ms: 3200 });
         assert_eq!(ended(&events).start_ms, 3200);
+    }
+
+    #[test]
+    fn a_shorter_minimum_keeps_a_short_word() {
+        let script = Script(vec![(50, 60)], 0);
+        let mut segmenter = Segmenter::new(script).with_min_speech_ms(100);
+        let events: Vec<_> = (0..200).flat_map(|_| segmenter.push(&[0; FRAME])).collect();
+        assert_eq!(ended(&events).speech_ms(), 160);
     }
 
     #[test]

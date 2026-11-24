@@ -515,6 +515,10 @@ never as instructions, and the system prompt says so.
 > call tools over at most 5 rounds. Enter is a yes only with an empty input and not within 400 ms of the question; typed
 > text that is not a plain yes is a no. The question never takes the keyboard.
 
+> SPEC CHANGE (2026-11-24): in a voice turn the mic opens for an answer only after everything written so far was said
+> (half-duplex). Silence, or speech that is not a plain yes or no, leaves the question open for the keys until the 10 s
+> are over, and then counts as No.
+
 ### 5.7 Config & secrets
 `%APPDATA%\Sohi\config.toml`. On first run, write it with defaults and comments. The config is re-read when the user picks
 "Open config" and the file's mtime has changed (no file watcher).
