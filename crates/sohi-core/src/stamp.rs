@@ -38,7 +38,7 @@ const MONTHS: [&str; 12] = [
 /// What the clock on the wall shows at some moment, to the second. Time
 /// zones and daylight saving time are not its business: 9 o'clock tomorrow
 /// is 9 on the clock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Stamp(i64);
 
@@ -151,7 +151,7 @@ impl Stamp {
             _ => {}
         }
         let (year, month, day) = self.date().parts();
-        let weekday = name(&DAYS, self.date().weekday());
+        let weekday = weekday_name(self.date().weekday());
         let month = name(&MONTHS, month - 1);
         let year = if year == now.date().parts().0 {
             String::new()
@@ -160,6 +160,19 @@ impl Stamp {
         };
         format!("on {weekday} {day} {month}{year} at {clock}")
     }
+}
+
+/// The weekday called `name` (0 = Sunday), in any case.
+#[must_use]
+pub fn weekday_named(name: &str) -> Option<i64> {
+    let index = DAYS.iter().position(|d| d.eq_ignore_ascii_case(name))?;
+    i64::try_from(index).ok()
+}
+
+/// What a weekday (0 = Sunday) is called.
+#[must_use]
+pub fn weekday_name(weekday: i64) -> &'static str {
+    name(&DAYS, weekday)
 }
 
 fn name(names: &[&'static str], index: i64) -> &'static str {
@@ -173,6 +186,14 @@ impl fmt::Display for Date {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (year, month, day) = self.parts();
         write!(f, "{year:04}-{month:02}-{day:02}")
+    }
+}
+
+impl fmt::Display for Clock {
+    /// "09:00".
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (hour, minute, _) = self.parts();
+        write!(f, "{hour:02}:{minute:02}")
     }
 }
 

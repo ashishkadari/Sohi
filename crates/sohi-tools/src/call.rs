@@ -2,9 +2,12 @@
 //! something that can be run. Anything that does not fit is an error the
 //! model is told about, never a guess.
 
+mod reminder;
+
 use std::fmt;
 
 use serde_json::{Map, Value};
+use sohi_core::reminder::{Repeat, When};
 
 use crate::Tool;
 
@@ -37,6 +40,22 @@ pub enum Call {
     Media(MediaAction),
     /// `volume`.
     Volume(VolumeAction),
+    /// `reminder_set`.
+    ReminderSet {
+        /// What to remember.
+        text: String,
+        /// When.
+        when: When,
+        /// How often.
+        repeat: Repeat,
+    },
+    /// `reminder_list`.
+    ReminderList,
+    /// `reminder_cancel`.
+    ReminderCancel {
+        /// The reminder's number.
+        id: u32,
+    },
     /// `shell_exec`.
     #[cfg(feature = "shell")]
     ShellExec {
@@ -126,6 +145,15 @@ impl Call {
                 "set" => VolumeAction::Set(percent(&args)?),
                 other => return Err(unknown_action(other)),
             }),
+            Tool::ReminderSet => Self::ReminderSet {
+                text: text(&args, "text")?,
+                when: reminder::when(&args)?,
+                repeat: reminder::repeat(&args)?,
+            },
+            Tool::ReminderList => Self::ReminderList,
+            Tool::ReminderCancel => Self::ReminderCancel {
+                id: reminder::id(&args)?,
+            },
             #[cfg(feature = "shell")]
             Tool::ShellExec => {
                 let command = text(&args, "command")?.trim().to_owned();
@@ -145,6 +173,9 @@ impl Call {
             Self::ClipboardSet { .. } => Tool::ClipboardSet,
             Self::Media(_) => Tool::Media,
             Self::Volume(_) => Tool::Volume,
+            Self::ReminderSet { .. } => Tool::ReminderSet,
+            Self::ReminderList => Tool::ReminderList,
+            Self::ReminderCancel { .. } => Tool::ReminderCancel,
             #[cfg(feature = "shell")]
             Self::ShellExec { .. } => Tool::ShellExec,
         }
@@ -168,6 +199,11 @@ impl Call {
             Self::Volume(VolumeAction::Up) => "volume up".to_owned(),
             Self::Volume(VolumeAction::Down) => "volume down".to_owned(),
             Self::Volume(VolumeAction::Set(level)) => format!("volume {level}%"),
+            Self::ReminderSet { text, when, .. } => {
+                format!("remind you {}: {}", reminder::span(*when), one_line(text))
+            }
+            Self::ReminderList => "list your reminders".to_owned(),
+            Self::ReminderCancel { id } => format!("cancel reminder {id}"),
             // Checked to be one short visible line: shown whole.
             #[cfg(feature = "shell")]
             Self::ShellExec { command } => format!("command {command}"),
@@ -268,6 +304,67 @@ mod tests {
         let call = Call::parse(tool, args).unwrap();
         assert_eq!(call.tool().name(), tool);
         assert_eq!(&call, want);
+    }
+
+    #[test]
+    fn reminders() {
+        let set = |when, repeat| Call::ReminderSet {
+            text: "tea".to_owned(),
+            when,
+            repeat,
+        };
+        let at = |time: &str, day: &str| When::At(time.parse().unwrap(), day.parse().unwrap());
+        for (args, when, repeat) in [
+            (r#""in_minutes":1.5"#, When::In(90), Repeat::Once),
+            (r#""in_minutes":"10""#, When::In(600), Repeat::Once),
+            (
+                r#""time":"9:00","day":"friday","repeat":"weekly""#,
+                at("9", "friday"),
+                Repeat::Weekly,
+            ),
+            // Models fill in what they do not need.
+            (
+                r#""in_minutes":0,"time":"21:00","day":null,"repeat":null"#,
+                at("21", ""),
+                Repeat::Once,
+            ),
+            (
+                r#""in_minutes":5,"time":"","day":"today""#,
+                When::In(300),
+                Repeat::Once,
+            ),
+        ] {
+            let args = format!(r#"{{"text":"tea",{args}}}"#);
+            good("reminder_set", &args, &set(when, repeat));
+        }
+        for args in [
+            "{}",
+            r#"{"text":"tea"}"#,
+            r#"{"text":"","in_minutes":1}"#,
+            r#"{"text":"tea","in_minutes":-1}"#,
+            r#"{"text":"tea","in_minutes":1e300}"#,
+            r#"{"text":"tea","time":"later"}"#,
+            r#"{"text":"tea","time":"9:00","day":"someday"}"#,
+            r#"{"text":"tea","in_minutes":1,"repeat":"hourly"}"#,
+        ] {
+            bad("reminder_set", args);
+        }
+        good("reminder_list", "", &Call::ReminderList);
+        let id = 2;
+        good(
+            "reminder_cancel",
+            r#"{"number":2}"#,
+            &Call::ReminderCancel { id },
+        );
+        good(
+            "reminder_cancel",
+            r#"{"number":"2"}"#,
+            &Call::ReminderCancel { id },
+        );
+        bad("reminder_cancel", "{}");
+        bad("reminder_cancel", r#"{"number":-2}"#);
+        let summary = set(When::In(90), Repeat::Once).summary();
+        assert_eq!(summary, "remind you in 2 min: tea");
     }
 
     #[test]

@@ -17,26 +17,26 @@ fn add(list: &mut Reminders, text: &str, when: When, repeat: Repeat) -> Reminder
 
 #[test]
 fn the_moment_is_worked_out() {
-    let day = Some("2026-12-01".parse().unwrap());
+    let day = |text: &str| text.parse().unwrap();
     for (when, repeat, want) in [
         (When::In(90), Repeat::Once, "2026-11-24 18:01:30"),
         (
-            When::At(clock("19"), None),
+            When::At(clock("19"), Day::Next),
             Repeat::Once,
             "2026-11-24 19:00:00",
         ),
         (
-            When::At(clock("18"), None),
+            When::At(clock("18"), Day::Next),
             Repeat::Once,
             "2026-11-25 18:00:00",
         ),
         (
-            When::At(clock("9"), None),
+            When::At(clock("9"), Day::Next),
             Repeat::Daily,
             "2026-11-25 09:00:00",
         ),
         (
-            When::At(clock("9"), day),
+            When::At(clock("9"), day("2026-12-01")),
             Repeat::Once,
             "2026-12-01 09:00:00",
         ),
@@ -44,9 +44,22 @@ fn the_moment_is_worked_out() {
         let r = add(&mut Reminders::default(), "x", when, repeat);
         assert_eq!(r.at.to_string(), want);
     }
+    for (time, text, want) in [
+        ("9", "Tomorrow", "2026-11-25 09:00:00"),
+        ("19", "today", "2026-11-24 19:00:00"),
+        ("19", "tuesday", "2026-11-24 19:00:00"),
+        ("9", "tuesday", "2026-12-01 09:00:00"),
+        ("9", "Friday", "2026-11-27 09:00:00"),
+        ("9", "", "2026-11-25 09:00:00"),
+    ] {
+        let when = When::At(clock(time), day(text));
+        let r = add(&mut Reminders::default(), "x", when, Repeat::Once);
+        assert_eq!(r.at.to_string(), want, "{text}");
+    }
+    assert!("someday".parse::<Day>().is_err());
     // Friday evening: the next weekday is Monday.
     let friday = at("2026-11-27 18:00");
-    let when = When::At(clock("9"), None);
+    let when = When::At(clock("9"), Day::Next);
     let r = Reminders::default().add(friday, "x", when, Repeat::Weekdays);
     assert_eq!(r.unwrap().at, at("2026-11-30 09:00"));
 }
@@ -60,7 +73,7 @@ fn nonsense_is_refused() {
     assert_eq!(add("x", When::In(0)), Err(Refused::Past));
     assert_eq!(add("x", When::In(-60)), Err(Refused::Past));
     assert_eq!(add("x", When::In(i64::MAX)), Err(Refused::TooFar));
-    let past = When::At(clock("9"), Some("2026-11-24".parse().unwrap()));
+    let past = When::At(clock("9"), "2026-11-24".parse().unwrap());
     assert_eq!(add("x", past), Err(Refused::Past));
     for _ in 0..MAX_COUNT {
         add("x", When::In(60)).unwrap();
@@ -126,7 +139,7 @@ fn what_repeats_moves_on() {
         (Repeat::Weekly, "2026-12-20 09:00:00", "2026-12-23 09:00:00"),
     ] {
         let mut list = Reminders::default();
-        add(&mut list, "x", When::At(clock("9"), None), repeat);
+        add(&mut list, "x", When::At(clock("9"), Day::Next), repeat);
         assert_eq!(list.take_due(at(now)).len(), 1);
         assert_eq!(list.next_at(), Some(at(want)), "{repeat:?} {now}");
         assert_eq!(list.take_due(at(now)), []);

@@ -2,6 +2,8 @@
 //! any model. Deterministic, and only whole sentences match, so ordinary
 //! text is never taken for a command by accident.
 
+use crate::reminder::{self, Phrase};
+
 /// The reply to anything that is not a command.
 pub const UNKNOWN_REPLY: &str = "Offline. I can only run local commands right now.";
 
@@ -22,6 +24,8 @@ pub enum Intent {
     Copy(String),
     /// `what time is it`.
     Time,
+    /// `remind me …`, `set a timer …`, `reminders`, `cancel reminder <N>`.
+    Reminder(Phrase),
 }
 
 /// A media key.
@@ -65,6 +69,9 @@ pub fn parse(text: &str) -> Option<Intent> {
     }
     if let Some(level) = after_word(text, "volume") {
         return volume(level).map(Intent::Volume);
+    }
+    if let Some(phrase) = reminder::parse(text) {
+        return Some(Intent::Reminder(phrase));
     }
     let plain = text.to_lowercase();
     let plain: Vec<&str> = plain.split_whitespace().collect();
@@ -147,6 +154,7 @@ mod tests {
             ("mute", Intent::Mute),
             ("copy Hi there!", Intent::Copy("Hi there!".into())),
             ("What  time is it?", Intent::Time),
+            ("Reminders.", Intent::Reminder(Phrase::List)),
         ] {
             assert_eq!(parse(text), Some(want), "{text:?}");
         }

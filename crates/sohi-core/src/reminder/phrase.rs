@@ -1,6 +1,6 @@
 //! Reminders without a model (spec §5.3, §5.10): whole sentences only.
 
-use super::When;
+use super::{Day, When};
 
 /// Something to do about reminders.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,7 +52,7 @@ fn moment(words: &[&str]) -> Option<When> {
         ["in", n, unit] => span(n, unit),
         ["at", time @ ..] if !time.is_empty() => {
             let clock = time.join(" ").parse().ok()?;
-            Some(When::At(clock, None))
+            Some(When::At(clock, Day::Next))
         }
         _ => None,
     }
@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn whole_sentences_are_understood() {
-        let at = |text: &str| When::At(text.parse().unwrap(), None);
+        let at = |text: &str| When::At(text.parse().unwrap(), Day::Next);
         let set = |text: &str, when| Phrase::Set(text.to_owned(), when);
         for (text, want) in [
             (

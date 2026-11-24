@@ -605,8 +605,8 @@ fail the turn gracefully) · `WM_ENDSESSION` (flush the log, exit).
 > SPEC CHANGE (2026-11-24): added at the owner's request.
 
 - **Setting one:** by voice or typing, through the models' tools `reminder_set` (`text` of at most 120 characters, and
-  either `in_minutes` or `time` with an optional `date`; `repeat` is `daily`, `weekdays` or `weekly`), `reminder_list` and
-  `reminder_cancel`. The date arithmetic is done in code, not by the model. A `time` without a date is the next time the
+  either `in_minutes` or `time` with an optional `day` (a date, `tomorrow` or a weekday); `repeat` is `daily`, `weekdays` or `weekly`), `reminder_list` and
+  `reminder_cancel`. The date arithmetic is done in code, not by the model. A `time` without a day is the next time the
   clock shows it. Allowed without asking (like every tool, not in a turn that read outside text). At most 100 reminders,
   at most 5 years ahead.
 - **Without the internet:** the command grammar (§5.3) has `remind me in <N> minutes|hours to <text>`,

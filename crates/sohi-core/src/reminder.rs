@@ -3,10 +3,11 @@
 mod phrase;
 
 use std::fmt;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::stamp::{Clock, DAY, Date, Stamp};
+use crate::stamp::{Clock, DAY, Date, NotATime, Stamp, weekday_named};
 
 pub use phrase::{Phrase, parse};
 
@@ -78,8 +79,41 @@ impl Repeat {
 pub enum When {
     /// This many seconds from now.
     In(i64),
-    /// At this time, on that day or the next time the clock shows it.
-    At(Clock, Option<Date>),
+    /// At this time.
+    At(Clock, Day),
+}
+
+/// Which day a time is on. Models get weekdays wrong, so the calendar is
+/// left to this crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Day {
+    /// Whichever comes first.
+    Next,
+    /// That day.
+    On(Date),
+    /// This many days from now: 0 = today.
+    Ahead(i64),
+    /// The next of these weekdays (0 = Sunday).
+    Weekday(i64),
+}
+
+impl FromStr for Day {
+    type Err = NotATime;
+
+    /// "2026-11-24", "today", "tomorrow", "Friday"; nothing is
+    /// [`Day::Next`].
+    fn from_str(text: &str) -> Result<Self, NotATime> {
+        let text = text.trim().to_ascii_lowercase();
+        Ok(match text.as_str() {
+            "" => Self::Next,
+            "today" => Self::Ahead(0),
+            "tomorrow" => Self::Ahead(1),
+            other => match weekday_named(other) {
+                Some(day) => Self::Weekday(day),
+                None => Self::On(other.parse()?),
+            },
+        })
+    }
 }
 
 /// A reminder.
@@ -241,13 +275,18 @@ fn line(text: &str) -> String {
 fn resolve(now: Stamp, when: When, repeat: Repeat) -> Result<Stamp, Refused> {
     let at = match when {
         When::In(seconds) => now.plus(seconds),
-        When::At(clock, Some(date)) => date.at(clock),
-        When::At(clock, None) => {
-            let mut date = now.date();
-            let weekdays = repeat == Repeat::Weekdays;
-            while date.at(clock) <= now || (weekdays && date.is_weekend()) {
-                date = date.plus(1);
-            }
+        When::At(clock, Day::On(date)) => date.at(clock),
+        When::At(clock, Day::Ahead(days)) => now.date().plus(days).at(clock),
+        When::At(clock, day) => {
+            let fits = |date: Date| match day {
+                Day::Weekday(wanted) => date.weekday() == wanted,
+                _ => repeat != Repeat::Weekdays || !date.is_weekend(),
+            };
+            let days = (0..8).map(|n| now.date().plus(n));
+            let date = days
+                .filter(|d| fits(*d))
+                .find(|d| d.at(clock) > now)
+                .ok_or(Refused::Past)?;
             date.at(clock)
         }
     };
