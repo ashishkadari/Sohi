@@ -5,11 +5,15 @@ use crate::apps::App;
 
 pub(crate) struct FakeDesktop {
     pub did: Vec<String>,
+    pub clipboard: Option<String>,
 }
 
 impl FakeDesktop {
     pub fn new() -> Self {
-        Self { did: Vec::new() }
+        Self {
+            did: Vec::new(),
+            clipboard: None,
+        }
     }
 }
 
@@ -25,6 +29,16 @@ impl Desktop for FakeDesktop {
 
     fn open(&mut self, target: &str) -> Result<(), String> {
         self.did.push(format!("open {target}"));
+        Ok(())
+    }
+
+    fn clipboard(&mut self, max_bytes: usize) -> Result<Option<String>, String> {
+        self.did.push(format!("read {max_bytes}"));
+        Ok(self.clipboard.clone())
+    }
+
+    fn set_clipboard(&mut self, text: &str) -> Result<(), String> {
+        self.did.push(format!("copy {text}"));
         Ok(())
     }
 }

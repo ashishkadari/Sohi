@@ -15,6 +15,19 @@ pub trait Desktop: Send {
     /// # Errors
     /// Returns why it could not be opened.
     fn open(&mut self, target: &str) -> Result<(), String>;
+
+    /// The clipboard's text, at most `max_bytes` of it; `None` if it
+    /// holds none.
+    ///
+    /// # Errors
+    /// Returns why it could not be read.
+    fn clipboard(&mut self, max_bytes: usize) -> Result<Option<String>, String>;
+
+    /// Replaces the clipboard's contents.
+    ///
+    /// # Errors
+    /// Returns why it could not be written.
+    fn set_clipboard(&mut self, text: &str) -> Result<(), String>;
 }
 
 /// This PC.
@@ -44,6 +57,20 @@ impl Desktop for WinDesktop {
         sohi_win::shell::open_path(Path::new(target)).map_err(|err| {
             log::warn!("cannot open: {err:?}");
             "Windows could not open it".to_owned()
+        })
+    }
+
+    fn clipboard(&mut self, max_bytes: usize) -> Result<Option<String>, String> {
+        sohi_win::clipboard_text(max_bytes).map_err(|err| {
+            log::warn!("cannot read the clipboard: {err}");
+            "the clipboard is in use".to_owned()
+        })
+    }
+
+    fn set_clipboard(&mut self, text: &str) -> Result<(), String> {
+        sohi_win::set_clipboard_text(text).map_err(|err| {
+            log::warn!("cannot write the clipboard: {err}");
+            "the clipboard is in use".to_owned()
         })
     }
 }

@@ -7,6 +7,9 @@ use serde_json::json;
 use crate::apps::AppIndex;
 use crate::{Call, Desktop, one_line, url};
 
+/// How much of the clipboard a model may see (spec §5.6).
+const CLIPBOARD_BYTES: usize = 8 * 1024;
+
 /// What a call did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
@@ -80,7 +83,27 @@ impl<D: Desktop> Executor<D> {
         match call {
             Call::LaunchApp { name } => self.launch(name),
             Call::OpenUrl { url } => self.open_url(url),
+            Call::ClipboardGet => self.clipboard_get(),
+            Call::ClipboardSet { text } => self.clipboard_set(text),
             _ => Outcome::failed("not available yet"),
+        }
+    }
+
+    fn clipboard_get(&mut self) -> Outcome {
+        match self.desktop.clipboard(CLIPBOARD_BYTES) {
+            Ok(Some(text)) => Outcome {
+                untrusted: Some(text),
+                ..Outcome::done("Read the clipboard.")
+            },
+            Ok(None) => Outcome::failed("There is no text on the clipboard."),
+            Err(why) => Outcome::failed(format!("Reading the clipboard failed: {why}.")),
+        }
+    }
+
+    fn clipboard_set(&mut self, text: &str) -> Outcome {
+        match self.desktop.set_clipboard(text) {
+            Ok(()) => Outcome::done("Copied."),
+            Err(why) => Outcome::failed(format!("Copying failed: {why}.")),
         }
     }
 
@@ -150,6 +173,22 @@ mod tests {
         assert!(!open("javascript:alert(1)"));
         assert!(!open(r"\\server\share\x.exe"));
         assert_eq!(executor.desktop.did, ["open https://github.com"]);
+    }
+
+    #[test]
+    fn clipboard_text_is_untrusted() {
+        let mut executor = Executor::new(FakeDesktop::new());
+        assert!(!executor.run(&Call::ClipboardGet).ok);
+        executor.desktop.clipboard = Some("secret".to_owned());
+        let outcome = executor.run(&Call::ClipboardGet);
+        assert_eq!(outcome.untrusted.as_deref(), Some("secret"));
+        assert!(!outcome.message.contains("secret"));
+        let text = "hi".to_owned();
+        assert_eq!(
+            executor.run(&Call::ClipboardSet { text }),
+            Outcome::done("Copied.")
+        );
+        assert_eq!(executor.desktop.did, ["read 8192", "read 8192", "copy hi"]);
     }
 
     #[test]
