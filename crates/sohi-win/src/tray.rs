@@ -51,36 +51,30 @@ pub struct TrayIcon {
 }
 
 impl TrayIcon {
-    /// Adds the icon, drawn from `rgba_for_size(size)` at the small-icon
-    /// size for `dpi`.
+    /// Draws the icon from `rgba_for_size(size)` at the small-icon size for
+    /// `dpi`. It appears with [`TrayIcon::show`].
     ///
     /// # Errors
-    /// Returns [`WinError`] if the icon cannot be created or added.
-    pub fn add(
+    /// Returns [`WinError`] if the icon cannot be created.
+    pub fn new(
         window: &AppWindow,
         dpi: u32,
         rgba_for_size: impl Fn(u32) -> Vec<u8>,
     ) -> Result<Self, WinError> {
         let icon = create_icon(dpi, &rgba_for_size)?;
-        let tray = Self {
+        Ok(Self {
             hwnd: window.raw(),
             icon,
-        };
-        tray.notify(NIM_ADD)?;
-        let mut data = tray.data();
-        data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-        // SAFETY: `data` is a fully initialized NOTIFYICONDATAW.
-        if !unsafe { Shell_NotifyIconW(NIM_SETVERSION, &raw const data) }.as_bool() {
-            return Err(WinError::last("Shell_NotifyIconW(NIM_SETVERSION)"));
-        }
-        Ok(tray)
+        })
     }
 
-    /// Re-adds the icon after Explorer restarts (`TaskbarCreated`).
+    /// Adds the icon to the notification area: at the start, and again
+    /// after Explorer restarts (`TaskbarCreated`).
     ///
     /// # Errors
-    /// Returns [`WinError`] if the shell rejects the icon.
-    pub fn readd(&self) -> Result<(), WinError> {
+    /// Returns [`WinError`] if the shell rejects the icon. Right after the
+    /// user signed in or Explorer started it may not be ready yet.
+    pub fn show(&self) -> Result<(), WinError> {
         // After a real Explorer restart the icon is gone and NIM_ADD works;
         // if it still exists (spurious broadcast), refresh it instead.
         self.notify(NIM_ADD).or_else(|_| self.notify(NIM_MODIFY))?;

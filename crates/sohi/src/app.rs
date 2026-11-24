@@ -12,7 +12,7 @@ use sohi_core::visibility::Input;
 use sohi_core::wake::CornerSettings;
 use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{
-    AppWindow, EventQueue, FrameTimer, HotkeyHost, NetworkWatch, Presence, PresenceWatch,
+    AppTimer, AppWindow, EventQueue, FrameTimer, HotkeyHost, NetworkWatch, Presence, PresenceWatch,
     RemoteWindow, TimerHost, TrayIcon, WinError, WinEvent,
 };
 
@@ -57,10 +57,22 @@ pub struct Options {
     pub tools: ToolsConfig,
 }
 
+/// Timer id, next to those of [`crate::text_mode`].
+const TIMER_TRAY: usize = 4;
+/// How long the taskbar gets before the tray icon is tried again.
+const TRAY_RETRY: Duration = Duration::from_secs(3);
+/// How often. Later, `TaskbarCreated` says when it is ready.
+const MAX_TRAY_TRIES: u32 = 10;
+
 /// Everything the UI thread owns.
 pub struct App {
     head: Head,
     tray: TrayIcon,
+    /// When the tray icon is tried again.
+    tray_retry: Option<AppTimer>,
+    /// How often that was done.
+    tray_tries: u32,
+    timers: TimerHost,
     /// For quitting: closing the app window ends the message loop.
     main_window: RemoteWindow,
     paths: Paths,
@@ -101,7 +113,7 @@ impl App {
         if !sohi_win::force_dark_menus() {
             log::warn!("dark menus unavailable; using the system theme");
         }
-        let tray = TrayIcon::add(window, dpi, sohi_render::tray_icon)?;
+        let tray = TrayIcon::new(window, dpi, sohi_render::tray_icon)?;
         let hotkeys = Hotkeys::register(window, &tray, &options.wake);
         let corner = CornerSettings::from_config(&options.wake);
         let presence = PresenceWatch::register(window)
@@ -132,6 +144,9 @@ impl App {
         let mut app = Self {
             head,
             tray,
+            tray_retry: None,
+            tray_tries: 0,
+            timers: TimerHost::new(window),
             main_window: window.remote(),
             paths,
             menu_state: MenuState {
@@ -147,6 +162,7 @@ impl App {
             _network: network,
             text,
         };
+        app.show_tray();
         app.relayout();
         app.text.show_base(&mut app.head);
         Ok(app)
@@ -195,15 +211,18 @@ impl App {
             WinEvent::TrayActivated => log::info!("tray icon activated"),
             WinEvent::TaskbarCreated => {
                 log::info!("taskbar restarted; re-adding tray icon");
-                if let Err(err) = self.tray.readd() {
-                    log::warn!("cannot re-add tray icon: {err}");
-                }
+                self.tray_tries = 0;
+                self.show_tray();
             }
             WinEvent::Runtime => self.text.on_runtime(&mut self.head),
             WinEvent::PillSubmit
             | WinEvent::PillEscape
             | WinEvent::PillRecall
             | WinEvent::PillFocus(_) => self.text.on_pill(event, &mut self.head),
+            WinEvent::Timer { id: TIMER_TRAY } => {
+                self.tray_retry = None;
+                self.show_tray();
+            }
             WinEvent::Timer { id } => {
                 if !self.text.on_timer(id, &mut self.head) {
                     log::debug!("unknown timer {id}");
@@ -231,6 +250,23 @@ impl App {
         self.head.input(Input::Reveal {
             retract_after: Some(hold),
         });
+    }
+
+    /// Shows the tray icon. While the taskbar is busy (right after signing
+    /// in) that can fail, so it is tried a few more times.
+    fn show_tray(&mut self) {
+        let Err(err) = self.tray.show() else {
+            return;
+        };
+        log::warn!("cannot add the tray icon: {err}");
+        if self.tray_tries < MAX_TRAY_TRIES {
+            self.tray_tries += 1;
+            self.tray_retry = self
+                .timers
+                .start(TIMER_TRAY, TRAY_RETRY)
+                .inspect_err(|err| log::warn!("cannot start a timer: {err}"))
+                .ok();
+        }
     }
 
     /// A voice wake: reveal the head and listen (spec §3.3), or open the
