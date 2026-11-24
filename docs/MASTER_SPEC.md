@@ -632,7 +632,8 @@ eminders.json`, plain text, written through a temporary file. A file that cannot
 > SPEC CHANGE (2026-11-24): added at the owner's request.
 
 - **When:** the mic opens (two rising notes), the utterance ended (a soft tick), a tool question waits, something failed,
-  a reminder is due (a chime, before it is said), the cape takes over and goes back (a whoosh; none with reduced motion).
+  a reminder is due (a chime, before it is said), the cape takes over and goes back (a dark, stuttering signal
+  that lands on the moment the screen is covered; almost nothing above 3 kHz, so it is not rough; none with reduced motion).
 - **Synthesized** in code (`sohi-audio::sound`), mono 24 kHz, made when played: no sound files, nothing kept.
 - **Never taken for speech:** only the sound of the mic opening may be heard by the mic. It is so short that the voice
   detector discards it (tested); the question's sound is left out in voice turns, where the mic opens for the answer.

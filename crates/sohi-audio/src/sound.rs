@@ -1,6 +1,10 @@
 //! Sohi's sounds (spec §5.11), synthesized: there are no sound files.
 
+mod glitch;
+
 use std::f32::consts::TAU;
+
+use glitch::Glitch;
 
 /// The rate the sounds are made at, in Hz.
 pub const SAMPLE_RATE: u32 = 24_000;
@@ -53,8 +57,18 @@ impl Sound {
                 &[(1046.5, 0, 500), (1318.5, 160, 600), (1568.0, 320, 900)],
                 280.0,
             ),
-            Self::CapeOver => whoosh(1_700, true),
-            Self::CapeBack => whoosh(800, false),
+            Self::CapeOver => Glitch {
+                ms: 2_000,
+                beat: 1_280,
+                rising: true,
+            }
+            .wave(),
+            Self::CapeBack => Glitch {
+                ms: 1_000,
+                beat: 180,
+                rising: false,
+            }
+            .wave(),
         };
         let loudest = wave.iter().fold(f32::EPSILON, |max, s| max.max(s.abs()));
         let gain = f32::from(volume.min(100)) / 100.0 * FULL * self.level() / loudest;
@@ -117,40 +131,14 @@ fn notes(notes: &[(f32, u32, u32)], fade: f32) -> Vec<f32> {
     wave
 }
 
-/// Cloth in the wind: noise between two moving filters, over a low hum.
-/// It opens up when `rising`, and is drawn back in otherwise.
-fn whoosh(ms: u32, rising: bool) -> Vec<f32> {
-    let len = count(ms);
-    let total = seconds(len);
-    let mut noise = Noise(0x50_48_49_21);
-    let (mut high, mut low) = (0.0_f32, 0.0_f32);
-    let mut phase = 0.0_f32;
-    (0..len)
-        .map(|i| {
-            let t = seconds(i);
-            let p = t / total;
-            let open = if rising { p } else { 1.0 - p };
-            // The cape beats as it goes.
-            let beat = 0.75 + 0.25 * (TAU * 3.2 * t).sin();
-            let swell = (p * std::f32::consts::PI).sin().powi(2) * beat;
-            let cut = 250.0 + 2_600.0 * open * open;
-            high += filter(cut) * (noise.next() - high);
-            low += filter(cut * 0.25) * (high - low);
-            phase += TAU * (48.0 + 40.0 * open) / seconds_per();
-            let hum = phase.sin() * 0.12;
-            swell * ((high - low) + hum)
-        })
-        .collect()
-}
-
 #[expect(clippy::cast_precision_loss, reason = "24000 is exact")]
-fn seconds_per() -> f32 {
+fn rate() -> f32 {
     SAMPLE_RATE as f32
 }
 
 /// The coefficient of a one-pole low-pass at `cut` Hz.
 fn filter(cut: f32) -> f32 {
-    1.0 - (-TAU * cut / seconds_per()).exp()
+    1.0 - (-TAU * cut / rate()).exp()
 }
 
 /// White noise, the same every time (xorshift).
@@ -169,6 +157,19 @@ impl Noise {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// To listen to them: `cargo test -p sohi-audio -- --ignored writes_them`
+    /// puts them into `target/snap`.
+    #[test]
+    #[ignore = "writes files"]
+    fn writes_them() {
+        let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/snap");
+        std::fs::create_dir_all(&folder).unwrap();
+        for sound in Sound::ALL {
+            let wav = crate::wav::encode_with_rate(&sound.samples(60), SAMPLE_RATE);
+            std::fs::write(folder.join(format!("{sound:?}.wav")), wav).unwrap();
+        }
+    }
     use crate::vad::{Earshot, Segment, Segmenter};
 
     #[test]
@@ -205,8 +206,8 @@ mod tests {
             (Sound::Ask, 600),
             (Sound::Error, 500),
             (Sound::Reminder, 1_300),
-            (Sound::CapeOver, 1_700),
-            (Sound::CapeBack, 800),
+            (Sound::CapeOver, 2_000),
+            (Sound::CapeBack, 1_000),
         ] {
             assert!(sound.samples(50).len() <= count(max), "{sound:?}");
         }
