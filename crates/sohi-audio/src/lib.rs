@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod playback;
 pub mod ring;
 pub mod vad;
 pub mod wav;

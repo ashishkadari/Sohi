@@ -5,6 +5,7 @@
 //! safe RAII wrappers to the rest of the workspace.
 
 mod apptimer;
+mod audio;
 mod capture;
 mod clock;
 mod console;
@@ -23,6 +24,7 @@ mod msgloop;
 pub mod perf;
 mod pill;
 mod pill_proc;
+mod render;
 mod session;
 pub mod shell;
 mod surface;
@@ -46,6 +48,7 @@ pub use instance::{SingleInstance, forward_to_running_instance, register_window_
 pub use monitor::{MonitorInfo, primary_monitor};
 pub use msgloop::{post_quit, run_message_loop};
 pub use pill::PillWindow;
+pub use render::Playback;
 pub use session::{Presence, PresenceWatch};
 pub use theme::{animations_enabled, force_dark_menus};
 pub use timer::{FRAME_30_FPS, FRAME_60_FPS, FrameTimer};

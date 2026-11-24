@@ -468,6 +468,9 @@ async fn run_turn(input: TurnInput, cancel: CancelToken, ctx: &Ctx) -> Result<()
 - **TTS:** prefer a provider output format of raw PCM/WAV streaming (no decoder needed). If only MP3/Opus is available, add a
   minimal decoder behind a cargo feature and record its size cost. The render thread uses WASAPI shared mode with
   `AUTOCONVERTPCM` at the provider's sample rate. The output envelope (RMS of each 20 ms block) drives the visor.
+  > SPEC CHANGE (2026-11-23): the output opens when a voice turn's reply is requested, not on the first PCM. Opening
+  > (`IAudioClient::Initialize`) takes about 300 ms, so this hides it behind the wait for the model. It plays silence
+  > until speech arrives and still closes as soon as the last sentence was heard.
   Offline/OneCore: `SpeechSynthesizer.SynthesizeTextToStreamAsync` → WAV → same render path.
 - **Half-duplex:** the mic is always closed while speaking. That removes echo/AEC complexity. Barge-in uses the hotkey or a click.
 - **Cancellation:** every turn has one `CancelToken` (a `tokio::sync::watch` wrapper). `CancelTurn` aborts in-flight HTTP

@@ -18,20 +18,11 @@ use std::time::Instant;
 use sohi_audio::ring::{CaptureWriter, SAMPLE_RATE};
 use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Media::Audio::{
-    AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
-    AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-    IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator, WAVE_FORMAT_PCM,
-    WAVEFORMATEX, eCapture, eConsole,
+    AUDCLNT_BUFFERFLAGS_SILENT, IAudioCaptureClient, IAudioClient, eCapture,
 };
-use windows::Win32::System::Com::{
-    CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
-};
-use windows::Win32::System::Threading::{
-    AvRevertMmThreadCharacteristics, AvSetMmThreadCharacteristicsW, CreateEventW, SetEvent,
-    WaitForMultipleObjects,
-};
-use windows::core::w;
+use windows::Win32::System::Threading::{SetEvent, WaitForMultipleObjects};
 
+use crate::audio::{event, initialize, open_endpoint, pro_audio};
 use crate::{OwnedHandle, WinError};
 
 /// WASAPI's buffer: 100 ms, in 100 ns units. Packets arrive every device
@@ -62,18 +53,14 @@ impl Capture {
     /// Returns [`WinError`] if the stop event or the thread cannot be
     /// created.
     pub fn open(writer: CaptureWriter, started: Instant) -> Result<Self, WinError> {
-        // SAFETY: plain auto-reset event, no name or security attributes.
-        let stop = unsafe { CreateEventW(None, false, false, None) }
-            .map_err(|e| WinError::api("CreateEventW", &e))?;
-        // SAFETY: the event was just created and is owned only here.
-        let stop = Arc::new(unsafe { OwnedHandle::from_raw(stop) });
+        let stop = Arc::new(event()?);
         let first_packet = Arc::new(AtomicU64::new(NONE_YET));
         let thread = {
             let stop = Arc::clone(&stop);
             let first_packet = Arc::clone(&first_packet);
             std::thread::Builder::new()
                 .name("sohi-capture".to_owned())
-                .spawn(move || run(writer, &stop, &first_packet, started))
+                .spawn(move || pro_audio(|| session(writer, &stop, &first_packet, started)))
                 .map_err(|_| WinError::invalid("CreateThread", "capture thread"))?
         };
         Ok(Self {
@@ -124,31 +111,6 @@ impl Drop for Capture {
     }
 }
 
-/// The thread body: set up COM and MMCSS around the capture session.
-fn run(
-    writer: CaptureWriter,
-    stop: &OwnedHandle,
-    first_packet: &AtomicU64,
-    started: Instant,
-) -> Result<(), WinError> {
-    // SAFETY: first COM call on this new thread; balanced below.
-    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
-        .ok()
-        .map_err(|e| WinError::api("CoInitializeEx", &e))?;
-    let mut task_index = 0u32;
-    // SAFETY: a valid task name and out-pointer; reverted below.
-    let mmcss = unsafe { AvSetMmThreadCharacteristicsW(w!("Pro Audio"), &raw mut task_index) };
-    let result = session(writer, stop, first_packet, started);
-    if let Ok(handle) = mmcss {
-        // SAFETY: the handle came from AvSetMmThreadCharacteristicsW above.
-        let _ = unsafe { AvRevertMmThreadCharacteristics(handle) };
-    }
-    // SAFETY: balances CoInitializeEx; every COM object was dropped in
-    // `session`.
-    unsafe { CoUninitialize() };
-    result
-}
-
 /// Opens the default capture device and runs the capture loop.
 fn session(
     mut writer: CaptureWriter,
@@ -171,47 +133,9 @@ fn session(
 
 /// The default capture endpoint, initialized for 16 kHz mono i16.
 fn open_device() -> Result<(IAudioClient, IAudioCaptureClient, OwnedHandle), WinError> {
-    // SAFETY: COM is initialized on this thread (see `run`).
-    let devices: IMMDeviceEnumerator =
-        unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
-            .map_err(|e| WinError::api("CoCreateInstance(MMDeviceEnumerator)", &e))?;
-    // SAFETY: as above.
-    let device = unsafe { devices.GetDefaultAudioEndpoint(eCapture, eConsole) }
-        .map_err(|e| WinError::api("GetDefaultAudioEndpoint", &e))?;
-    // SAFETY: as above.
-    let client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }
-        .map_err(|e| WinError::api("IMMDevice::Activate", &e))?;
-
-    let format = WAVEFORMATEX {
-        wFormatTag: u16::try_from(WAVE_FORMAT_PCM).unwrap_or(1),
-        nChannels: 1,
-        nSamplesPerSec: SAMPLE_RATE,
-        nAvgBytesPerSec: SAMPLE_RATE * 2,
-        nBlockAlign: 2,
-        wBitsPerSample: 16,
-        cbSize: 0,
-    };
-    let flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK
-        | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
-        | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
-    // SAFETY: `format` outlives the call; shared mode takes a periodicity
-    // of 0.
-    unsafe {
-        client.Initialize(
-            AUDCLNT_SHAREMODE_SHARED,
-            flags,
-            BUFFER_HNS,
-            0,
-            &raw const format,
-            None,
-        )
-    }
-    .map_err(|e| WinError::api("IAudioClient::Initialize", &e))?;
-    // SAFETY: plain auto-reset event.
-    let ready = unsafe { CreateEventW(None, false, false, None) }
-        .map_err(|e| WinError::api("CreateEventW", &e))?;
-    // SAFETY: the event was just created and is owned only here.
-    let ready = unsafe { OwnedHandle::from_raw(ready) };
+    let client = open_endpoint(eCapture)?;
+    initialize(&client, SAMPLE_RATE, BUFFER_HNS)?;
+    let ready = event()?;
     // SAFETY: the client is initialized for event callbacks; the event
     // outlives the client's use of it (both live in this session).
     unsafe { client.SetEventHandle(ready.raw()) }
