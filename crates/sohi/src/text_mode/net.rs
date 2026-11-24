@@ -92,9 +92,7 @@ impl TextMode {
         log::info!("connectivity: {state:?}");
         self.interaction.set_voice_available(state.is_usable());
         self.with_pill(|pill| pill.set_placeholder(&self.placeholder(false)));
-        if is_base(head.visual()) {
-            head.set_visual(self.base_visual());
-        }
+        self.show_base(head);
         let woken = self.offline_wake;
         if !state.is_usable() {
             return;
@@ -106,6 +104,13 @@ impl TextMode {
         {
             log::info!("online after all: listening");
             self.event(Turn::VoiceWake { focus: false }, head);
+        }
+    }
+
+    /// Shows the idle look that fits the connectivity.
+    pub fn show_base(&self, head: &mut Head) {
+        if is_base(head.visual()) {
+            head.set_visual(self.base_visual());
         }
     }
 

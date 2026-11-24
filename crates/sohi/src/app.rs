@@ -145,6 +145,7 @@ impl App {
             text,
         };
         app.relayout();
+        app.text.show_base(&mut app.head);
         Ok(app)
     }
 
