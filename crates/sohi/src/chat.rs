@@ -459,6 +459,7 @@ async fn stream(
         model,
         system: &turn.system,
         messages: &turn.messages,
+        tools: &[],
     };
     let started = Instant::now();
     log::info!(

@@ -911,11 +911,18 @@ minimum granularity, not a cap.
    `voxtral-mini-tts-3`; first audio about 0.4 s. `GET /v1/audio/voices` lists the voices. US-English female:
    Sheila `voice_478`, Margaret `voice_447`, and Jane `gb_jane_*` in several moods, tagged `en_us` but with a `gb_` id.)*
 3. Mistral function-calling schema and streaming tool-call delta format.
+   *(Verified 2026-11-24 live with `mistral-small-latest`: `tools: [{type: "function", function: {name, description,
+   parameters}}]`; all calls arrive whole in one event's `delta.tool_calls` (`id` of 9 letters and digits, `index`,
+   `function.name`, `function.arguments` as a JSON string), then `[DONE]`. Results go back as `role: "tool"` with
+   `tool_call_id`, after the assistant message with its `tool_calls`.)*
 4. Anthropic Messages API current model IDs and streaming event types for tool use. *(Text streaming verified 2026-11-22:
    `POST /v1/messages`, `x-api-key`, `anthropic-version: 2026-10-21` (no `temperature`/`top_p`/`top_k` on that version),
    text in `content_block_delta`/`text_delta`, end at `message_stop`, mid-stream `error` events, `ping`. Current cheap tier:
-   `claude-haiku-5-5`. Tool-use events still to verify in P7.)*
-5. Ollama `/api/chat` tool-calling support for the chosen offline model.
+   `claude-haiku-5-5`.) (Tool use implemented 2026-11-24 from the documentation and tested against mocks only, as no
+   Anthropic key is stored: `tool_use` blocks whose input arrives as `input_json_delta`, `tool_result` blocks in one user
+   message, the assistant's blocks sent back unchanged, thinking included.)*
+5. Ollama `/api/chat` tool-calling support for the chosen offline model. *(2026-11-24: not used. Offline commands run
+   through the grammar of §5.3; Ollama answers the rest without tools. Ollama is not installed on the dev laptop.)*
 6. ~~Maintenance status of the `webrtc-vad` (or `fvad`) crate and whether it builds under MSVC.~~ *(Resolved
    2026-11-22: unmaintained since 2019; replaced by `earshot`, see §2.2.)*
 7. `NotifyNetworkConnectivityHintChange` behaviour on Win11 builds in use.

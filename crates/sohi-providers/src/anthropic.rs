@@ -7,14 +7,17 @@
 //!
 //! API version `2026-10-21`: no sampling parameters are sent.
 
+mod blocks;
+
 use serde::{Deserialize, Serialize};
-use sohi_core::chat::Message;
+use serde_json::Value;
 use sohi_core::secret::Secret;
 
 use crate::http::{Auth, HttpClient};
 use crate::mistral::{BETWEEN_CHUNKS, FIRST_BYTE};
 use crate::sse::SseParser;
-use crate::{ChatRequest, ProviderError};
+use crate::{ChatRequest, Completion, ProviderError};
+use blocks::Blocks;
 
 /// The public API.
 pub const BASE_URL: &str = "https://api.anthropic.com";
@@ -54,7 +57,7 @@ impl Anthropic {
         key: &Secret,
         request: &ChatRequest<'_>,
         on_delta: &mut dyn FnMut(&str),
-    ) -> Result<(), ProviderError> {
+    ) -> Result<Completion, ProviderError> {
         let body = request_body(request)?;
         let url = format!("{}/v1/messages", self.base_url);
         let headers = [
@@ -85,14 +88,10 @@ struct Body<'a> {
     max_tokens: u32,
     #[serde(skip_serializing_if = "is_empty")]
     system: &'a str,
-    messages: Vec<WireMessage<'a>>,
+    messages: Vec<Value>,
     stream: bool,
-}
-
-#[derive(Serialize)]
-struct WireMessage<'a> {
-    role: &'a str,
-    content: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<Value>,
 }
 
 #[allow(
@@ -108,15 +107,9 @@ fn request_body(request: &ChatRequest<'_>) -> Result<Vec<u8>, ProviderError> {
         model: request.model,
         max_tokens: MAX_TOKENS,
         system: request.system,
-        messages: request
-            .messages
-            .iter()
-            .map(|m: &Message| WireMessage {
-                role: m.role.as_str(),
-                content: &m.content,
-            })
-            .collect(),
+        messages: blocks::messages(request.messages),
         stream: true,
+        tools: blocks::tools(request.tools)?,
     };
     serde_json::to_vec(&body).map_err(|e| ProviderError::BadResponse(e.to_string()))
 }
@@ -126,18 +119,12 @@ fn request_body(request: &ChatRequest<'_>) -> Result<Vec<u8>, ProviderError> {
 struct Event {
     #[serde(rename = "type")]
     kind: String,
-    delta: Option<Delta>,
+    /// Which content block a `content_block_*` event is about.
+    #[serde(default)]
+    index: u64,
+    content_block: Option<Value>,
+    delta: Option<Value>,
     error: Option<ApiError>,
-}
-
-#[derive(Deserialize)]
-struct Delta {
-    /// `text_delta`, `thinking_delta`, … on `content_block_delta`; absent
-    /// on `message_delta`.
-    #[serde(rename = "type")]
-    kind: Option<String>,
-    text: Option<String>,
-    stop_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -153,6 +140,7 @@ struct ApiError {
 struct StreamState {
     any_text: bool,
     stop_reason: Option<String>,
+    blocks: Blocks,
 }
 
 impl StreamState {
@@ -162,26 +150,27 @@ impl StreamState {
             .map_err(|e| ProviderError::BadResponse(format!("bad stream event: {e}")))?;
         match event.kind.as_str() {
             "content_block_delta" => {
-                if let Some(Delta {
-                    kind: Some(kind),
-                    text: Some(text),
-                    ..
-                }) = event.delta
-                    && kind == "text_delta"
-                    && !text.is_empty()
-                {
+                let delta = event.delta.unwrap_or_default();
+                let text = field(&delta, "text");
+                if field(&delta, "type") == "text_delta" && !text.is_empty() {
                     self.any_text = true;
-                    on_delta(&text);
+                    on_delta(text);
                 }
+                self.blocks.push(event.index, &delta);
+            }
+            "content_block_start" => {
+                self.blocks
+                    .start(event.index, event.content_block.unwrap_or_default());
             }
             "message_delta" => {
-                if let Some(reason) = event.delta.and_then(|d| d.stop_reason) {
-                    self.stop_reason = Some(reason);
+                let delta = event.delta.unwrap_or_default();
+                if let Some(reason) = delta.get("stop_reason").and_then(Value::as_str) {
+                    self.stop_reason = Some(reason.to_owned());
                 }
             }
             "message_stop" => return Ok(true),
             "error" => return Err(stream_error(event.error)),
-            // message_start, content_block_start/stop, ping, and any
+            // message_start, content_block_stop, ping, and any
             // event type added later.
             _ => {}
         }
@@ -189,12 +178,18 @@ impl StreamState {
     }
 
     /// The outcome of a stream that reached `message_stop`.
-    fn finish(self) -> Result<(), ProviderError> {
+    fn finish(self) -> Result<Completion, ProviderError> {
         match self.stop_reason.as_deref() {
             Some("refusal") if !self.any_text => Err(ProviderError::Refused),
-            _ => Ok(()),
+            // Calls that were cut off are not run.
+            Some("refusal" | "max_tokens") => Ok(Completion::default()),
+            _ => Ok(self.blocks.finish()),
         }
     }
+}
+
+fn field<'a>(value: &'a Value, key: &str) -> &'a str {
+    value.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
 /// Classifies an `error` event the way an HTTP status would be.
@@ -217,6 +212,7 @@ fn stream_error(error: Option<ApiError>) -> ProviderError {
 mod tests {
     use super::*;
     use crate::testserver::{Reply, serve_once};
+    use sohi_core::chat::Message;
 
     fn event(name: &str, data: &str) -> String {
         format!("event: {name}\ndata: {data}\n\n")
@@ -273,12 +269,13 @@ mod tests {
             model: "claude-haiku-5-5",
             system: "Be brief.",
             messages: &history,
+            tools: &[],
         };
         let mut deltas = Vec::new();
         let result = anthropic
             .chat_stream(&key, &request, &mut |d| deltas.push(d.to_owned()))
             .await
-            .map(|()| deltas);
+            .map(|_| deltas);
         (result, server.request().await)
     }
 
@@ -322,6 +319,7 @@ mod tests {
             model: "m",
             system: "",
             messages: &[],
+            tools: &[],
         };
         let json: serde_json::Value =
             serde_json::from_slice(&request_body(&request).unwrap()).unwrap();
@@ -385,5 +383,51 @@ mod tests {
             ProviderError::BadResponse(_)
         ));
         assert!(matches!(stream_error(None), ProviderError::BadResponse(_)));
+    }
+
+    async fn called(reason: &str) -> Completion {
+        let mut events = vec![
+            event(
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"volume","input":{}}}"#,
+            ),
+            event(
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"action\":\"up\"}"}}"#,
+            ),
+        ];
+        events.extend(stop(reason));
+        let pieces: Vec<&str> = events.iter().map(String::as_str).collect();
+        let server = serve_once(Reply::chunked(200, &pieces)).await;
+        let anthropic = Anthropic::new(HttpClient::new().unwrap(), server.url(""));
+        let key = Secret::from_input("sk-ant-test").unwrap();
+        let spec = sohi_core::chat::ToolSpec {
+            name: "volume",
+            description: "Change it.",
+            parameters: r#"{"type":"object"}"#,
+        };
+        let request = ChatRequest {
+            model: "m",
+            system: "",
+            messages: &[Message::user("Louder")],
+            tools: &[spec],
+        };
+        let done = anthropic.chat_stream(&key, &request, &mut |_| {}).await;
+        assert!(
+            server
+                .request()
+                .await
+                .contains(r#""input_schema":{"type":"object"}"#)
+        );
+        done.unwrap()
+    }
+
+    #[tokio::test]
+    async fn tool_calls_are_collected_unless_cut_off() {
+        let done = called("tool_use").await;
+        assert_eq!(done.calls[0].id, "toolu_1");
+        assert_eq!(done.calls[0].arguments, r#"{"action":"up"}"#);
+        assert!(done.blocks.unwrap().contains("toolu_1"));
+        assert_eq!(called("max_tokens").await, Completion::default());
     }
 }

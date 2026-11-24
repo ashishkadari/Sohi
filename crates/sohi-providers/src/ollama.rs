@@ -183,6 +183,7 @@ mod tests {
             model: "tiny",
             system: "Be brief.",
             messages: &messages,
+            tools: &[],
         };
         let mut reply = String::new();
         let result = ollama(url)

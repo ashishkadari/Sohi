@@ -46,6 +46,7 @@ async fn generate(
                 model,
                 system: &turn.system,
                 messages: &turn.messages,
+                tools: &[],
             };
             ollama.chat_stream(&request, on_delta).await?;
             log::info!(

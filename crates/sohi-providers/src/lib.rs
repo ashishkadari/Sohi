@@ -16,7 +16,7 @@ mod testserver;
 pub mod tts;
 pub mod voxtral;
 
-use sohi_core::chat::Message;
+use sohi_core::chat::{Message, ToolCall, ToolSpec};
 
 pub use anthropic::Anthropic;
 pub use error::ProviderError;
@@ -36,4 +36,15 @@ pub struct ChatRequest<'a> {
     pub system: &'a str,
     /// The conversation so far, oldest first, ending with the user's turn.
     pub messages: &'a [Message],
+    /// The tools the model may call.
+    pub tools: &'a [ToolSpec],
+}
+
+/// How a streamed reply ended, besides its text.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Completion {
+    /// The tools the model wants called. Empty: the reply is complete.
+    pub calls: Vec<ToolCall>,
+    /// See [`Message::blocks`].
+    pub blocks: Option<String>,
 }
