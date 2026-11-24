@@ -334,7 +334,7 @@ fn set_text(hwnd: HWND, text: &str) {
 mod tests {
     use super::*;
     use crate::{FullEvent, WinEvent};
-    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_RETURN};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SetKeyboardState, VK_ESCAPE, VK_RETURN};
     use windows::Win32::UI::WindowsAndMessaging::{WM_CLOSE, WM_COMMAND, WM_KEYDOWN};
 
     fn window() -> (EventQueue, FullWindow) {
@@ -362,6 +362,9 @@ mod tests {
     #[test]
     fn keys_buttons_and_closing_become_events() {
         let (queue, full) = window();
+        // Whoever is at the PC may be holding Shift or Ctrl just now.
+        // SAFETY: 256 bytes, for this thread's own key state.
+        unsafe { SetKeyboardState(&[0; 256]) }.unwrap();
         send(full.input, WM_KEYDOWN, usize::from(VK_RETURN.0));
         send(full.input, WM_KEYDOWN, usize::from(VK_ESCAPE.0));
         send(full.hwnd.raw(), WM_COMMAND, FIRST_BUTTON + 1);
