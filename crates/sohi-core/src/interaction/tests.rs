@@ -188,6 +188,8 @@ fn the_head_retracting_closes_the_pill_without_retracting_again() {
 /// everything except the two ways in.
 #[test]
 fn every_event_in_every_state_is_handled() {
+    let (turn, ask, yes) = (1, 1, true);
+    let answered = Event::ToolAnswered { turn, ask, yes };
     let events = || {
         vec![
             Event::TextHotkey,
@@ -208,6 +210,12 @@ fn every_event_in_every_state_is_handled() {
                 turn: 1,
                 message: "m".into(),
             },
+            Event::ToolQuestion {
+                turn: 1,
+                ask: 1,
+                summary: "s".into(),
+            },
+            answered.clone(),
             Event::ErrorShown,
             Event::Escape,
             Event::HeadGone,
@@ -219,13 +227,18 @@ fn every_event_in_every_state_is_handled() {
         let effects = m.step(event.clone());
         assert_eq!(!effects.is_empty(), opens, "idle + {event:?}");
     }
-    for setup in 0..3 {
+    for setup in 0..4 {
         for event in events() {
             let mut m = Interaction::new();
             let turn = submitted(&mut m, "x");
             match setup {
                 0 => drop(m.step(Event::LlmDone { turn })),
                 1 => {}
+                2 => drop(m.step(Event::ToolQuestion {
+                    turn,
+                    ask: 1,
+                    summary: "s".into(),
+                })),
                 _ => drop(m.step(Event::TurnFailed {
                     turn,
                     message: "m".into(),

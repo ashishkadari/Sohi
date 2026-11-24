@@ -293,6 +293,7 @@ impl TextMode {
             Effect::StartTurn { turn, text } => return self.start_turn(turn, text),
             Effect::StartListening { turn } => return self.start_listening(turn),
             Effect::CancelTurn { turn } => self.cancel_turn(turn),
+            Effect::AnswerTool { turn, ask, yes } => self.answer_tool(turn, ask, yes),
             Effect::SetVisual(VisualState::Idle) => head.set_visual(self.base_visual()),
             Effect::SetVisual(visual) => head.set_visual(visual),
             Effect::FlashError => head.flash_error(),
@@ -405,6 +406,17 @@ impl TextMode {
         if let Err(err) = runtime.send(request) {
             // Its updates are ignored either way: the turn id moved on.
             log::warn!("cannot cancel turn {turn}: {err:?}");
+        }
+    }
+
+    fn answer_tool(&self, turn: u64, ask: u32, yes: bool) {
+        log::info!("turn {turn}: question {ask} answered {yes}");
+        let Some(runtime) = &self.runtime else {
+            return;
+        };
+        if let Err(err) = runtime.send(Request::Answer { turn, ask, yes }) {
+            // Without an answer the question times out as a no.
+            log::warn!("cannot answer question {ask}: {err:?}");
         }
     }
 

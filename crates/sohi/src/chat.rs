@@ -34,6 +34,15 @@ pub enum Request {
         /// Echoed in [`Update::Probed`].
         id: u64,
     },
+    /// The user answered a tool question.
+    Answer {
+        /// The turn that asked.
+        turn: u64,
+        /// Which of its questions.
+        ask: u32,
+        /// The answer.
+        yes: bool,
+    },
     /// Cancel `turn` if it is the one running. `at` is when the user asked,
     /// for the latency log.
     Cancel {
@@ -259,6 +268,10 @@ async fn serve_with(
             Request::Chat(turn) => Job::Chat(turn),
             Request::Listen(listen) => Job::Listen(listen),
             Request::Cancel { .. } => continue,
+            Request::Answer { turn, ask, yes } => {
+                log::info!("turn {turn} already ended: answer {yes} to question {ask} dropped");
+                continue;
+            }
             Request::Probe { id } => {
                 probe(id, &ui);
                 continue;
@@ -314,7 +327,7 @@ async fn run_cancellable(
                     return Outcome::Cancelled { turn, at };
                 }
                 // Cancelling a turn that already ended: keep going.
-                Some(Request::Cancel { .. }) => {}
+                Some(Request::Cancel { .. } | Request::Answer { .. }) => {}
                 Some(Request::Probe { id }) => probe(id, ui),
                 Some(request) => {
                     log::info!("turn {id} replaced by a newer one");

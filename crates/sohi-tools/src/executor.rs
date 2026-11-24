@@ -5,7 +5,7 @@ use std::time::Instant;
 use serde_json::json;
 
 use crate::apps::AppIndex;
-use crate::{Call, Desktop, MediaAction, VolumeAction, one_line, url};
+use crate::{Call, Desktop, MediaAction, Permit, VolumeAction, one_line, url};
 
 /// How much of the clipboard a model may see (spec §5.6).
 const CLIPBOARD_BYTES: usize = 8 * 1024;
@@ -64,8 +64,7 @@ impl Outcome {
     }
 }
 
-/// Runs calls on a [`Desktop`]. Whether a call may run is decided before
-/// (by the policy); this only does it.
+/// Runs calls on a [`Desktop`], given the policy's [`Permit`].
 #[derive(Debug)]
 pub struct Executor<D> {
     desktop: D,
@@ -81,8 +80,12 @@ impl<D: Desktop> Executor<D> {
         }
     }
 
-    /// Runs `call`. Blocks until it is done.
-    pub fn run(&mut self, call: &Call) -> Outcome {
+    /// Runs what was permitted. Blocks until it is done.
+    pub fn run(&mut self, permit: &Permit) -> Outcome {
+        self.execute(permit.call())
+    }
+
+    fn execute(&mut self, call: &Call) -> Outcome {
         match call {
             Call::LaunchApp { name } => self.launch(name),
             Call::OpenUrl { url } => self.open_url(url),
@@ -170,7 +173,7 @@ mod tests {
 
     fn launch(executor: &mut Executor<FakeDesktop>, name: &str) -> Outcome {
         let name = name.to_owned();
-        executor.run(&Call::LaunchApp { name })
+        executor.execute(&Call::LaunchApp { name })
     }
 
     #[test]
@@ -190,7 +193,7 @@ mod tests {
         let mut executor = Executor::new(FakeDesktop::new());
         let mut open = |url: &str| {
             let url = url.to_owned();
-            executor.run(&Call::OpenUrl { url }).ok
+            executor.execute(&Call::OpenUrl { url }).ok
         };
         assert!(open("github.com"));
         assert!(!open("file:///C:/x.exe"));
@@ -202,14 +205,14 @@ mod tests {
     #[test]
     fn clipboard_text_is_untrusted() {
         let mut executor = Executor::new(FakeDesktop::new());
-        assert!(!executor.run(&Call::ClipboardGet).ok);
+        assert!(!executor.execute(&Call::ClipboardGet).ok);
         executor.desktop.clipboard = Some("secret".to_owned());
-        let outcome = executor.run(&Call::ClipboardGet);
+        let outcome = executor.execute(&Call::ClipboardGet);
         assert_eq!(outcome.untrusted.as_deref(), Some("secret"));
         assert!(!outcome.message.contains("secret"));
         let text = "hi".to_owned();
         assert_eq!(
-            executor.run(&Call::ClipboardSet { text }),
+            executor.execute(&Call::ClipboardSet { text }),
             Outcome::done("Copied.")
         );
         assert_eq!(executor.desktop.did, ["read 8192", "read 8192", "copy hi"]);
@@ -218,7 +221,7 @@ mod tests {
     #[test]
     fn media_and_volume() {
         let mut executor = Executor::new(FakeDesktop::new());
-        executor.run(&Call::Media(MediaAction::PlayPause));
+        executor.execute(&Call::Media(MediaAction::PlayPause));
         for action in [
             VolumeAction::Set(95),
             VolumeAction::Up,
@@ -226,7 +229,7 @@ mod tests {
             VolumeAction::Down,
             VolumeAction::Set(255),
         ] {
-            assert!(executor.run(&Call::Volume(action)).ok);
+            assert!(executor.execute(&Call::Volume(action)).ok);
         }
         assert_eq!(
             executor.desktop.did,
