@@ -43,6 +43,8 @@ pub struct Options {
     pub wake: WakeConfig,
     /// `[llm] model`.
     pub llm_model: String,
+    /// The Ollama model for offline turns; empty for none.
+    pub offline_model: String,
     /// The Anthropic fallback model; empty for none.
     pub llm_fallback_model: String,
     /// `[persona] user_name`.
@@ -115,6 +117,7 @@ impl App {
             TextSettings {
                 model: options.llm_model.clone(),
                 fallback_model: options.llm_fallback_model.clone(),
+                offline_model: options.offline_model.clone(),
                 user_name: options.user_name.clone(),
                 stt: options.stt.clone(),
                 tts: options.tts.clone(),

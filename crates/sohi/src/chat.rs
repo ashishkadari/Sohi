@@ -53,6 +53,9 @@ pub struct ChatTurn {
     pub model: String,
     /// The Anthropic model to fall back to; empty for no fallback.
     pub fallback_model: String,
+    /// Answer without the internet, with this Ollama model (empty for
+    /// none).
+    pub offline: Option<String>,
     /// The system prompt.
     pub system: String,
     /// The conversation, ending with the new prompt.
@@ -213,7 +216,10 @@ impl TurnRunner for ProviderRunner {
             Job::Chat(turn) => {
                 let id = turn.turn;
                 match self.client() {
-                    Ok(http) => answer(&http, &turn, ui).await,
+                    Ok(http) => match &turn.offline {
+                        Some(model) => crate::offline::answer(&http, &turn, model, ui).await,
+                        None => answer(&http, &turn, ui).await,
+                    },
                     Err(error) => {
                         log::warn!("turn {id} failed: {error}");
                         ui.send(Update::Failed { turn: id, error });

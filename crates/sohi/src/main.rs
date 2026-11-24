@@ -11,6 +11,7 @@ mod dev;
 mod head;
 mod hotkeys;
 mod logger;
+mod offline;
 mod offline_flag;
 mod perf;
 mod probe;
@@ -125,6 +126,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         perf: args.perf.is_some(),
         wake: config.wake.clone(),
         llm_model: config.llm.model.clone(),
+        offline_model: config.llm.offline_model.clone(),
         llm_fallback_model: config.llm.anthropic_fallback().to_owned(),
         user_name: config.persona.user_name.clone(),
         stt: config.stt.clone(),

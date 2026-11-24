@@ -36,6 +36,7 @@ fn turn(id: u64) -> Request {
         turn: id,
         model: String::new(),
         fallback_model: String::new(),
+        offline: None,
         system: String::new(),
         messages: Vec::new(),
     })

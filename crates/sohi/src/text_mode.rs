@@ -44,6 +44,8 @@ pub struct TextSettings {
     pub model: String,
     /// The Anthropic fallback model; empty for none.
     pub fallback_model: String,
+    /// The Ollama model for offline turns; empty for none.
+    pub offline_model: String,
     /// `[persona] user_name`.
     pub user_name: String,
     /// `[stt]`.
@@ -383,6 +385,7 @@ impl TextMode {
             turn,
             model: self.settings.model.clone(),
             fallback_model: self.settings.fallback_model.clone(),
+            offline: (!self.net.state().is_usable()).then(|| self.settings.offline_model.clone()),
             system: system_prompt(channel, &self.settings.user_name, &sohi_win::local_time()),
             messages: self.history.messages(),
         }
