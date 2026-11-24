@@ -343,6 +343,8 @@ impl TextMode {
             Effect::AppendBubble(text) => self.with_pill(|p| p.append_bubble(&text)),
             Effect::StartTurn { turn, text } => return self.start_turn(turn, text),
             Effect::StartListening { turn } => return self.start_listening(turn),
+            // Nothing is announced yet.
+            Effect::Say { turn, .. } => return Some(Event::PlaybackDone { turn }),
             Effect::CancelTurn { turn } => self.cancel_turn(turn),
             Effect::AnswerTool { turn, ask, yes } => self.answer_tool(turn, ask, yes),
             Effect::SetVisual(VisualState::Idle) => head.set_visual(self.base_visual()),
