@@ -20,6 +20,7 @@ use crate::head::Head;
 use crate::hotkeys::{self, Hotkeys};
 use crate::offline_flag;
 use crate::text_mode::{TextMode, TextSettings};
+use crate::ticker::Ticker;
 use crate::tray_menu::{self, MenuCommand, MenuState};
 
 /// Files the menu can open.
@@ -54,6 +55,23 @@ pub struct Options {
     pub tts: TtsConfig,
     /// `[tools]`.
     pub tools: ToolsConfig,
+}
+
+impl Options {
+    fn text_settings(&self, forced_offline: bool) -> TextSettings {
+        TextSettings {
+            model: self.llm_model.clone(),
+            fallback_model: self.llm_fallback_model.clone(),
+            offline_model: self.offline_model.clone(),
+            user_name: self.user_name.clone(),
+            stt: self.stt.clone(),
+            tts: self.tts.clone(),
+            tools: self.tools.clone(),
+            follow_up: self.wake.follow_up,
+            hotkey_text: self.wake.hotkey_text.clone(),
+            forced_offline,
+        }
+    }
 }
 
 /// Name of the startup entry, as Settings shows it.
@@ -109,7 +127,13 @@ impl App {
         paths: Paths,
         options: &Options,
     ) -> Result<Self, WinError> {
-        let head = Head::new(queue, timer, options.reduced_motion, options.perf)?;
+        let ticker = Ticker::new(timer);
+        let head = Head::new(
+            queue,
+            Rc::clone(&ticker),
+            options.reduced_motion,
+            options.perf,
+        )?;
         let dpi = sohi_win::primary_monitor().map_or(BASE_DPI, |m| m.dpi);
         if !sohi_win::force_dark_menus() {
             log::warn!("dark menus unavailable; using the system theme");
@@ -126,21 +150,11 @@ impl App {
             .ok();
         let text = TextMode::new(
             queue.clone(),
+            ticker,
             window.remote(),
             TimerHost::new(window),
             HotkeyHost::new(window),
-            TextSettings {
-                model: options.llm_model.clone(),
-                fallback_model: options.llm_fallback_model.clone(),
-                offline_model: options.offline_model.clone(),
-                user_name: options.user_name.clone(),
-                stt: options.stt.clone(),
-                tts: options.tts.clone(),
-                tools: options.tools.clone(),
-                follow_up: options.wake.follow_up,
-                hotkey_text: options.wake.hotkey_text.clone(),
-                forced_offline,
-            },
+            options.text_settings(forced_offline),
         );
         let mut app = Self {
             head,
@@ -185,7 +199,7 @@ impl App {
                 log::info!("wake requested");
                 self.wake(false);
             }
-            WinEvent::Frame => self.head.on_frame(),
+            WinEvent::Frame => self.on_frame(),
             WinEvent::CursorPoll => self.on_cursor_poll(),
             WinEvent::Hotkey { id } => self.on_hotkey(id),
             WinEvent::Presence(presence) => {
@@ -196,6 +210,7 @@ impl App {
                 if self.corner.on_presence(presence) {
                     // Nobody is looking: put the head away too.
                     self.head.input(Input::Retract);
+                    self.text.away(&mut self.head);
                 }
             }
             WinEvent::DisplayChanged => {
@@ -233,11 +248,17 @@ impl App {
                 log::info!("network hint: internet {internet}");
                 self.text.net(NetEvent::Hint { internet }, &mut self.head);
             }
+            WinEvent::Full(event) => self.text.on_full(event, &mut self.head),
             WinEvent::HeadHover(over) => {
                 log::debug!("head hover: {over}");
                 self.head.input(Input::Hover(over));
             }
         }
+    }
+
+    fn on_frame(&mut self) {
+        self.head.on_frame();
+        self.text.full_frame(&mut self.head);
     }
 
     /// The head, for startup dev modes.
@@ -322,6 +343,7 @@ impl App {
         // It can be changed in Settings as well.
         self.menu_state.start_with_windows = std::env::current_exe()
             .is_ok_and(|exe| sohi_win::starts_with_windows(AUTOSTART_NAME, &exe));
+        self.menu_state.full_mode = self.text.is_full();
         let items = tray_menu::items(self.menu_state);
         let chosen = self.tray.show_menu(&items, x, y);
         let Some(command) = chosen.and_then(MenuCommand::from_id) else {
@@ -339,6 +361,7 @@ impl App {
             }
             MenuCommand::Type => self.text.wake_text(TextEvent::HeadClicked, &mut self.head),
             MenuCommand::Talk => self.wake(true),
+            MenuCommand::FullMode => self.text.toggle_full(&mut self.head),
             MenuCommand::ForceOffline => self.toggle_offline(),
             MenuCommand::StartWithWindows => {
                 toggle_autostart(self.menu_state.start_with_windows);
@@ -363,7 +386,7 @@ impl App {
         }
         self.monitor = monitor.monitor;
         let rect = head_window_rect(monitor.work, monitor.dpi);
-        self.text.set_layout(rect, monitor.dpi);
+        self.text.set_layout(rect, monitor);
         if self.head.set_rect(rect) {
             log::info!(
                 "head at {rect:?} (work {:?}, dpi {})",

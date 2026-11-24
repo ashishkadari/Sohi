@@ -11,6 +11,7 @@ use std::time::Instant;
 
 use sohi_core::chat::{Message, ToolRun};
 use sohi_core::config::{SttConfig, TtsConfig};
+use sohi_core::full::Command;
 use sohi_providers::{HttpClient, ProviderError};
 use sohi_tools::Policy;
 use tokio::sync::mpsc::Receiver;
@@ -98,6 +99,13 @@ pub enum Update {
     SpeechStarted {
         /// The turn.
         turn: u64,
+    },
+    /// The user said a full mode command. The turn is over.
+    Command {
+        /// The turn.
+        turn: u64,
+        /// The command.
+        command: Command,
     },
     /// The utterance ended; the mic is closed and it is being transcribed.
     SpeechEnded {

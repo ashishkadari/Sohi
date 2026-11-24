@@ -123,6 +123,48 @@ pub(crate) fn swizzle_rgba_to_bgra(src: &[u8], dst: &mut [u8]) {
     }
 }
 
+/// Enlarges premultiplied RGBA, `width` pixels wide, to twice its size in
+/// BGRA, smoothing between pixels. `dst` is `dst_width` pixels wide; an odd
+/// last row or column is cut off.
+pub(crate) fn double_into(src: &[u8], width: usize, dst: &mut [u8], dst_width: usize) {
+    let (stride, dst_stride) = (width * 4, dst_width * 4);
+    if stride == 0 || dst_stride == 0 {
+        return;
+    }
+    // Every second row from one source row...
+    for (row, out) in src.chunks_exact(stride).zip(dst.chunks_mut(dst_stride * 2)) {
+        let (pixels, _) = row.as_chunks::<4>();
+        let (out, _) = out
+            .get_mut(..dst_stride)
+            .unwrap_or_default()
+            .as_chunks_mut::<8>();
+        let bgra = |&[r, g, b, a]: &[u8; 4]| u32::from_le_bytes([b, g, r, a]);
+        let next = pixels.iter().skip(1).chain(pixels.last());
+        for ((here, next), out) in pixels.iter().zip(next).zip(out) {
+            let here = bgra(here);
+            let pair = u64::from(here) | (u64::from(average(here, bgra(next))) << 32);
+            *out = pair.to_le_bytes();
+        }
+    }
+    // ...and the rows between as their averages.
+    let mut rows = dst.chunks_mut(dst_stride * 2).peekable();
+    while let Some(pair) = rows.next() {
+        let (here, between) = pair.split_at_mut(dst_stride.min(pair.len()));
+        let below = rows.peek().and_then(|p| p.get(..dst_stride));
+        let (between, _) = between.as_chunks_mut::<4>();
+        let (here, _) = here.as_chunks::<4>();
+        let (below, _) = below.unwrap_or(here.as_flattened()).as_chunks::<4>();
+        for ((&a, &b), out) in here.iter().zip(below).zip(between) {
+            *out = average(u32::from_le_bytes(a), u32::from_le_bytes(b)).to_le_bytes();
+        }
+    }
+}
+
+/// The average of two pixels, channel by channel, rounded down.
+fn average(a: u32, b: u32) -> u32 {
+    (a & b) + (((a ^ b) & 0xFEFE_FEFE) >> 1)
+}
+
 /// Like [`swizzle_rgba_to_bgra`], but moves the image `shift` pixels to
 /// the right: the left `shift` columns become transparent and the
 /// rightmost columns of `src` are clipped. Both buffers are `width` pixels
@@ -213,5 +255,34 @@ mod tests {
         assert_eq!(px.len(), 168 * 126 * 4);
         px.fill(0xAB);
         assert!(px.iter().all(|&b| b == 0xAB));
+    }
+
+    #[test]
+    fn doubling_smooths_and_swizzles() {
+        // Two pixels side by side become 4 × 2.
+        let src = [10, 20, 30, 40, 30, 40, 50, 60];
+        let mut dst = [0; 4 * 2 * 4];
+        double_into(&src, 2, &mut dst, 4);
+        let row = [
+            [30, 20, 10, 40],
+            [40, 30, 20, 50],
+            [50, 40, 30, 60],
+            [50, 40, 30, 60],
+        ];
+        assert_eq!(dst[..16], *row.as_flattened());
+        assert_eq!(dst[16..], *row.as_flattened());
+    }
+
+    #[test]
+    fn doubling_averages_rows_and_cuts_odd_sizes() {
+        let src = [0, 0, 0, 0, 8, 8, 8, 8];
+        let mut dst = [1; 2 * 3 * 4];
+        double_into(&src, 1, &mut dst, 2);
+        assert_eq!(dst[..8], [0; 8]);
+        assert_eq!(dst[8..16], [4; 8]);
+        assert_eq!(dst[16..], [8; 8]);
+        let mut odd = [1; 4];
+        double_into(&[7; 4], 1, &mut odd, 1);
+        assert_eq!(odd, [1; 4]);
     }
 }

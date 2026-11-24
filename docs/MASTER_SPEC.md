@@ -335,6 +335,34 @@ fails (key combination in use), show a tray balloon and log it. Sohi keeps runni
 `SetPreferredAppMode(ForceDark)` + `FlushMenuThemes` (uxtheme.dll ordinals 135/136, undocumented but stable since
 Windows 10 1903 and used by Windows Terminal and Notepad++). If they cannot be resolved the menu uses the system theme. Re-add the icon when the `TaskbarCreated` message arrives (Explorer restarted).
 
+### 4.9 Full mode (P9)
+> SPEC CHANGE (2026-11-24): added after v1.0.0 at the owner's request.
+
+A full-screen chat window that Sohi turns into. Same conversation, voice, tools and safety rules as the pill; the
+pill and the head are away while it is open.
+
+- **Ways in:** saying or typing "full mode" (whole utterance only, filler words, repeats and the name allowed, so a
+  sentence about full mode is never a command), or the tray menu. Handled locally, without a model, offline as well.
+- **Ways out:** saying or typing "exit full mode", Esc while nothing runs, the Exit button, Alt+F4, the tray menu. Esc
+  while a turn runs only stops the turn.
+- **Take-over (about 2.1 s):** the head turns towards the screen; its cape sweeps out of the corner in waves until it
+  covers the monitor; the hooded figure opens its eyes in the middle, then shrinks into the window's header as the
+  window shows. **Leaving (about 0.8 s):** the cape closes and is drawn back into the corner. Original art in the
+  colours of §4.5. With reduced motion there is neither: the window just shows and hides.
+- **Overlay:** a click-through layered top-most window of its own, drawn at half resolution and doubled, existing only
+  during the two animations. The window underneath is shown or hidden once the cape covers everything.
+- **Window:** borderless, the primary monitor's full size, **not** top-most, with a taskbar button, so Alt+Tab works as
+  for any application. Created on entry, destroyed on leaving.
+- **Header:** the head, live (same states as the widget), the name, what Sohi is doing, and the buttons Talk, Copy code,
+  New chat and Exit.
+- **Transcript:** a read-only RichEdit (selection, copying, scrolling, screen readers for free). Shows the conversation
+  so far, then what is said and typed. Markdown: headings, bold, inline code, lists, and fenced code in a monospaced font
+  on a tinted ground. It follows new text only while it is scrolled to the end.
+- **Input:** multi-line. `Enter` sends, `Shift+Enter` breaks the line. `Ctrl+Shift+C` copies the last code block,
+  `Ctrl+N` starts a new chat, `Ctrl+M` talks. While a reply is being written Enter does nothing and the text stays.
+- **Prompt:** typed turns use their own prompt (Markdown and code welcome, as long as needed). Spoken turns stay spoken.
+- **Later:** this window is where further features go (files, projects, panels).
+
 ---
 
 ## 5. Online / Offline State Machine & Audio/API Pipeline
@@ -619,6 +647,7 @@ Each phase is broken into tasks. The task list and the commit for each task are 
 | **P6** | Connectivity & offline | Connectivity region, IP Helper hint subscription, probes with backoff only while Shown, Force-offline toggle, Ollama detection + NDJSON provider, deterministic intent parser, offline visuals and pill placeholder, online-recovery-on-wake. |
 | **P7** | Tools & safety | Tool registry + JSON schemas for Mistral/Anthropic/Ollama, executors (launch_app index, open_url, clipboard, media, volume), policy engine + confirmation UI (keyboard + voice yes/no), `shell` feature (off by default), tool-call round trip in the orchestrator. |
 | **P8** | Hardening & release | Full budget pass and fixes, soak test (8 h parked + 60 injected turns), device hot-plug, Explorer restart, DPI/monitor changes, "Start with Windows" (`HKCU\...\Run`), portable zip via `xtask release`, README with setup and key instructions. |
+| **P9** | Full mode | Full-screen chat with Markdown and code (§4.9), the cape take-over and its way back, voice, typed and tray commands. Version 1.1.0. |
 
 ---
 
@@ -709,6 +738,15 @@ Every phase also requires:
 - [ ] Survives: Explorer restart (tray returns), audio device unplug and replug, primary monitor swap, DPI change, sleep/resume.
 - [ ] "Start with Windows" toggle works. A portable zip runs on a clean Win11 VM with no runtime installs.
 - [ ] `v1.0.0` tag pushed. The README covers setup, key configuration, hotkeys and troubleshooting.
+
+### P9
+- [ ] "Full mode" by voice, typed in the pill, and from the tray opens it; a sentence that only mentions it does not.
+- [ ] The take-over and the way back run without a visible jump; with reduced motion neither plays.
+- [ ] Typed and spoken turns, tool questions, Esc, New chat and Copy code work in it.
+- [ ] Code arrives in its own style while it streams; nothing the model writes can break the window's formatting.
+- [ ] After leaving, the idle budgets of §6 hold: ≤ 20 MB private, idle CPU ≤ 60 ms per minute.
+- [ ] While open: ≤ 60 MB private. Animation frames ≤ 16 ms p95 at 1920 × 1200 (the 4 ms handler limit and the 1 ms frame
+  limit of §6 are for the widget).
 
 ---
 
@@ -928,6 +966,15 @@ Ask before anything outside this flow: force operations, deleting branches, chan
 
 Extra fix-up commits (`fix`, `refactor`, `test`) between tasks are expected and encouraged. The plan sets the
 minimum granularity, not a cap.
+
+**P9 — Full mode → `v1.1.0`**
+1. `docs(spec): add full mode`
+2. `feat(core): full mode commands, timeline and layout`
+3. `feat(core): streaming Markdown`
+4. `feat(render): cape take-over animation`
+5. `feat(win): overlay and full-screen chat windows`
+6. `feat(app): full mode`
+7. `perf(p9): full mode report`
 
 ---
 

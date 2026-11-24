@@ -3,8 +3,8 @@
 use windows::Win32::Foundation::{COLORREF, HWND};
 use windows::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET,
-    DEFAULT_PITCH, DeleteObject, FF_DONTCARE, FW_NORMAL, GetDC, GetTextMetricsW, HBRUSH, HDC,
-    HFONT, HGDIOBJ, OUT_DEFAULT_PRECIS, ReleaseDC, SelectObject, TEXTMETRICW,
+    DEFAULT_PITCH, DeleteObject, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, GetDC, GetTextMetricsW,
+    HBRUSH, HDC, HFONT, HGDIOBJ, OUT_DEFAULT_PRECIS, ReleaseDC, SelectObject, TEXTMETRICW,
 };
 use windows::core::w;
 
@@ -50,8 +50,14 @@ impl Font {
     /// Segoe UI Variable Text, 10.5 pt at `dpi` (spec §4.6). Windows
     /// substitutes a close match if the face is missing.
     pub(crate) fn ui(dpi: u32) -> Result<Self, WinError> {
-        // 10.5 pt = 21/2 pt; pixels = pt × dpi / 72, rounded.
-        let px = (21 * dpi + 72) / 144;
+        Self::sized(dpi, 21, false)
+    }
+
+    /// Segoe UI Variable Text in `half_points` at `dpi`.
+    pub(crate) fn sized(dpi: u32, half_points: u32, bold: bool) -> Result<Self, WinError> {
+        // Pixels = pt × dpi / 72, rounded.
+        let px = (half_points * dpi + 72) / 144;
+        let weight = if bold { FW_SEMIBOLD } else { FW_NORMAL };
         let height = -i32::try_from(px).unwrap_or(14);
         // SAFETY: the face name is a static NUL-terminated string.
         let font = unsafe {
@@ -60,7 +66,7 @@ impl Font {
                 0,
                 0,
                 0,
-                FW_NORMAL.0.cast_signed(),
+                weight.0.cast_signed(),
                 0,
                 0,
                 0,

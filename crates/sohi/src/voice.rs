@@ -17,6 +17,7 @@ use sohi_audio::vad::{Earshot, Segment, Segmenter, Utterance, rms};
 use sohi_audio::wav;
 use sohi_core::chat::Message;
 use sohi_core::config::SttConfig;
+use sohi_core::full;
 use sohi_core::persona::{HEARD_NAME, correct_heard_name};
 use sohi_core::secret::KeyName;
 use sohi_providers::voxtral::TranscribeRequest;
@@ -72,6 +73,10 @@ pub async fn run(runner: &mut ProviderRunner, listen: ListenTurn, ui: &UiLink<Up
         ended.elapsed().as_millis(),
         text.chars().count()
     );
+    if let Some(command) = full::command(&text) {
+        ui.send(Update::Command { turn, command });
+        return;
+    }
     ui.send(Update::Transcript {
         turn,
         text: text.clone(),

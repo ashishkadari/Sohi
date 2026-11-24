@@ -15,7 +15,7 @@ use tiny_skia::{
 };
 
 /// Spec §4.5 colour tokens (straight RGB).
-mod tokens {
+pub(crate) mod tokens {
     pub const RED_ACTIVE: [u8; 3] = [0xB0, 0x12, 0x2A];
     pub const RED_IDLE: [u8; 3] = [0x6D, 0x0B, 0x1A];
     pub const GLOW: [u8; 3] = [0xFF, 0x4D, 0x5E];
@@ -33,8 +33,8 @@ const FRAME: (f32, f32, f32, f32) = (12.0, 10.0, 88.0, 64.0);
 /// Corner bracket arm length.
 const BRACKET: f32 = 8.0;
 /// Eye centres and base radius.
-const EYES: [(f32, f32); 2] = [(52.0, 38.5), (60.0, 38.5)];
-const EYE_RADIUS: f32 = 1.9;
+pub(crate) const EYES: [(f32, f32); 2] = [(52.0, 38.5), (60.0, 38.5)];
+pub(crate) const EYE_RADIUS: f32 = 1.9;
 /// Collar line centre, base width and height.
 const COLLAR: (f32, f32) = (56.0, 64.7);
 const COLLAR_WIDTH: f32 = 10.0;
@@ -138,7 +138,7 @@ impl HeadRenderer {
             pixmap: Pixmap::new(width, height)?,
             body: Pixmap::new(width, height)?,
             body_tone: None,
-            hood: hood_path()?,
+            hood: hood_path(true)?,
             prev_frame: None,
         })
     }
@@ -451,20 +451,22 @@ fn draw_badge(pm: &mut Pixmap, ts: Transform, outlined: bool) {
 }
 
 /// The hood silhouette: shoulders at the frame's bottom edge rising to a
-/// peaked hood.
-fn hood_path() -> Option<Path> {
+/// peaked hood; `closed` along the bottom or not.
+pub(crate) fn hood_path(closed: bool) -> Option<Path> {
     let mut pb = PathBuilder::new();
     pb.move_to(30.0, 74.0);
     pb.quad_to(36.0, 58.0, 40.0, 46.0);
     pb.quad_to(41.0, 26.0, 56.0, 18.0);
     pb.quad_to(71.0, 26.0, 72.0, 46.0);
     pb.quad_to(76.0, 58.0, 82.0, 74.0);
-    pb.close();
+    if closed {
+        pb.close();
+    }
     pb.finish()
 }
 
 /// A DIP rectangle (`None` only for a zero or negative size).
-fn rect(x: f32, y: f32, w: f32, h: f32) -> Option<Rect> {
+pub(crate) fn rect(x: f32, y: f32, w: f32, h: f32) -> Option<Rect> {
     Rect::from_xywh(x, y, w, h)
 }
 
@@ -478,7 +480,7 @@ fn paint(color: [u8; 3], alpha: f32) -> Paint<'static> {
     p
 }
 
-fn fill(pm: &mut Pixmap, path: &Path, ts: Transform, color: [u8; 3], alpha: f32) {
+pub(crate) fn fill(pm: &mut Pixmap, path: &Path, ts: Transform, color: [u8; 3], alpha: f32) {
     pm.fill_path(path, &paint(color, alpha), FillRule::Winding, ts, None);
 }
 
@@ -488,7 +490,7 @@ fn fill_rect(pm: &mut Pixmap, ts: Transform, r: (f32, f32, f32, f32), color: [u8
     }
 }
 
-fn stroke(
+pub(crate) fn stroke(
     pm: &mut Pixmap,
     path: &Path,
     ts: Transform,

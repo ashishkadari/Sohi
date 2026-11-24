@@ -229,7 +229,10 @@ fn append_item(menu: windows::Win32::UI::WindowsAndMessaging::HMENU, item: &Menu
 
 /// Builds an HICON from square RGBA (straight or premultiplied alpha both
 /// work for opaque-or-clear pixels) at the small-icon size for `dpi`.
-fn create_icon(dpi: u32, rgba_for_size: &dyn Fn(u32) -> Vec<u8>) -> Result<HICON, WinError> {
+pub(crate) fn create_icon(
+    dpi: u32,
+    rgba_for_size: &dyn Fn(u32) -> Vec<u8>,
+) -> Result<HICON, WinError> {
     // SAFETY: no preconditions.
     let size = unsafe { GetSystemMetricsForDpi(SM_CXSMICON, dpi) };
     let size = u32::try_from(size).ok().filter(|&s| s > 0).unwrap_or(16);

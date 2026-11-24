@@ -5,12 +5,15 @@
 //! The pill window and the runtime thread are created on first use. The
 //! pill is destroyed after 5 minutes hidden, to give its memory back.
 
+mod full;
 mod net;
 
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use sohi_core::config::{SttConfig, ToolsConfig, TtsConfig};
 use sohi_core::connectivity::{Connectivity, Event as NetEvent};
+use sohi_core::full::{Command, command};
 use sohi_core::geometry::{BASE_DPI, RectPx};
 use sohi_core::history::History;
 use sohi_core::interaction::{ERROR_HOLD, Effect, Event, Interaction, State};
@@ -20,14 +23,16 @@ use sohi_core::visibility::{Input, Phase};
 use sohi_core::visual::VisualState;
 use sohi_tools::Policy;
 use sohi_win::{
-    AppTimer, EventQueue, HotkeyHost, HotkeyRegistration, PillWindow, RemoteWindow, TimerHost,
-    WinEvent,
+    AppTimer, EventQueue, HotkeyHost, HotkeyRegistration, MonitorInfo, PillWindow, RemoteWindow,
+    TimerHost, WinEvent,
 };
 
 use crate::chat::{ChatTurn, ListenTurn, Request, Update};
+use crate::full_mode::FullMode;
 use crate::head::Head;
 use crate::hotkeys;
 use crate::runtime::Runtime;
+use crate::ticker::Ticker;
 
 /// App-window timer ids.
 pub const TIMER_PILL_IDLE: usize = 1;
@@ -70,6 +75,9 @@ pub struct TextSettings {
 pub struct TextMode {
     interaction: Interaction,
     pill: Option<PillWindow>,
+    /// Full mode, while it is open.
+    full: Option<FullMode>,
+    ticker: Rc<Ticker>,
     runtime: Option<Runtime<Request, Update>>,
     history: History,
     last_prompt: Option<String>,
@@ -98,6 +106,7 @@ impl TextMode {
     /// Text mode with nothing created yet.
     pub fn new(
         queue: EventQueue,
+        ticker: Rc<Ticker>,
         window: RemoteWindow,
         timers: TimerHost,
         hotkeys: HotkeyHost,
@@ -109,6 +118,8 @@ impl TextMode {
         Self {
             interaction,
             pill: None,
+            full: None,
+            ticker,
             runtime: None,
             history: History::new(),
             last_prompt: None,
@@ -140,6 +151,7 @@ impl TextMode {
             }
         }
         self.sync_escape();
+        self.settle_full(head);
     }
 
     /// Holds Esc exactly while a voice turn runs.
@@ -167,6 +179,9 @@ impl TextMode {
                     && self.asked.elapsed() < READ_FIRST => {}
             WinEvent::PillSubmit => {
                 let text = pill.take_input();
+                if command(&text) == Some(Command::Enter) {
+                    return self.enter_full(head);
+                }
                 if !text.trim().is_empty() {
                     self.last_prompt = Some(text.clone());
                 }
@@ -212,6 +227,12 @@ impl TextMode {
                     }
                     Event::Transcript { turn, text }
                 }
+                Update::Command { turn, command } => {
+                    if self.is_current(turn) {
+                        self.obey(command, head);
+                    }
+                    continue;
+                }
                 Update::MicFailed { turn } => Event::TurnFailed {
                     turn,
                     message: "Sohi couldn't use the microphone.".to_owned(),
@@ -233,6 +254,8 @@ impl TextMode {
                 Update::Failed { turn, error } => {
                     if self.is_current(turn) {
                         self.history.drop_pending();
+                        // The message is not part of the reply.
+                        self.end_full_reply();
                     }
                     Event::TurnFailed {
                         turn,
@@ -279,16 +302,24 @@ impl TextMode {
     /// fired, the voice hotkey, or the session locked), and tells
     /// Connectivity whether the head is out.
     pub fn follow_head(&mut self, head: &mut Head) {
-        self.net_shown(head.phase() != Phase::Parked, head);
+        self.net_shown(self.is_full() || head.phase() != Phase::Parked, head);
+        if self.is_full() {
+            return;
+        }
         let gone = matches!(head.phase(), Phase::Retracting | Phase::Parked);
         if gone && self.interaction.state() != State::Idle {
             self.event(Event::HeadGone, head);
         }
     }
 
-    /// The head moved or the DPI changed: move the pill with it.
-    pub fn set_layout(&mut self, head_rect: RectPx, dpi: u32) {
+    /// The head moved or the monitor changed: move the pill (and full
+    /// mode) with it.
+    pub fn set_layout(&mut self, head_rect: RectPx, monitor: MonitorInfo) {
+        let dpi = monitor.dpi;
         self.head_rect = head_rect;
+        if let Some(full) = self.full.as_mut() {
+            full.set_layout(monitor, head_rect);
+        }
         let dpi_changed = dpi != self.dpi;
         self.dpi = dpi;
         if let Some(pill) = &self.pill {
@@ -302,7 +333,7 @@ impl TextMode {
 
     /// Carries out one effect. Returns a follow-up event, if any.
     fn apply(&mut self, effect: Effect, head: &mut Head) -> Option<Event> {
-        match effect {
+        match self.full_effect(effect)? {
             Effect::Reveal(rule) => head.input(rule.reveal()),
             Effect::Keep(rule) => head.input(rule.input()),
             Effect::Retract => head.input(Input::Retract),
@@ -369,7 +400,12 @@ impl TextMode {
     /// Hands the turn to the runtime thread, or returns its failure.
     fn start_turn(&mut self, turn: u64, text: String) -> Option<Event> {
         self.history.push_user(text);
-        let request = Request::Chat(self.chat_turn(Channel::Typed, turn));
+        let channel = if self.is_full() {
+            Channel::Full
+        } else {
+            Channel::Typed
+        };
+        let request = Request::Chat(self.chat_turn(channel, turn));
         let sent = self.runtime().map(|r| r.send(request));
         if matches!(sent, Some(Ok(()))) {
             return None;

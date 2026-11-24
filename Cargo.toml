@@ -4,7 +4,7 @@ members = ["crates/*", "xtask"]
 default-members = ["crates/*"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 publish = false
 
@@ -61,6 +61,7 @@ windows = { version = "0.62.2", default-features = false, features = [
     "Win32_System_Threading",
     "Win32_System_Variant",
     "Win32_UI_Controls",
+    "Win32_UI_Controls_RichEdit",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",

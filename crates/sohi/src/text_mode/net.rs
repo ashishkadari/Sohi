@@ -20,6 +20,7 @@ impl TextMode {
     /// A voice wake. Offline, it opens the pill instead; `focus` says
     /// whether the pill may then take the keyboard.
     pub fn wake(&mut self, focus: bool, head: &mut Head) {
+        self.front_full();
         let starts = matches!(self.interaction.state(), Talk::Idle);
         self.net(Event::Wake, head);
         self.offline_wake = (starts && self.net.state() == State::Offline).then(Instant::now);
@@ -29,6 +30,9 @@ impl TextMode {
     /// The text hotkey, the tray's Type, or a click on the head.
     pub fn wake_text(&mut self, event: Turn, head: &mut Head) {
         self.net(Event::Wake, head);
+        if self.front_full() {
+            return;
+        }
         self.event(event, head);
     }
 
@@ -72,7 +76,7 @@ impl TextMode {
         let event = match update {
             Update::Probed { id, reached: true } => Event::ProbeOk { id: *id },
             Update::Probed { id, reached: false } => Event::ProbeFailed { id: *id },
-            Update::Transcript { .. } => Event::RequestOk,
+            Update::Transcript { .. } | Update::Command { .. } => Event::RequestOk,
             Update::Failed {
                 error: ProviderError::Offline(_),
                 ..
@@ -93,6 +97,7 @@ impl TextMode {
         self.interaction.set_voice_available(state.is_usable());
         self.with_pill(|pill| pill.set_placeholder(&self.placeholder(false)));
         self.show_base(head);
+        self.settle_full(head);
         let woken = self.offline_wake;
         if !state.is_usable() {
             return;

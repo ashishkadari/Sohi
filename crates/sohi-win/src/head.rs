@@ -53,11 +53,11 @@ pub struct Frame<'a> {
 
 /// What the last `present` put on screen.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Presented {
-    dst: POINT,
-    size: SIZE,
-    opacity: u8,
-    shift: u32,
+pub(crate) struct Presented {
+    pub(crate) dst: POINT,
+    pub(crate) size: SIZE,
+    pub(crate) opacity: u8,
+    pub(crate) shift: u32,
 }
 
 /// The head widget window. Created hidden.
@@ -221,7 +221,7 @@ impl HeadWindow {
 
 /// Hands the DIB in `src_dc` to the compositor. Position and size are
 /// passed only when `moved`; `dirty` limits the update to one rectangle.
-fn update_layered(
+pub(crate) fn update_layered(
     hwnd: HWND,
     src_dc: HDC,
     now: &Presented,
