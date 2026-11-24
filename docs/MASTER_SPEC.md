@@ -702,7 +702,8 @@ Every phase also requires:
 - [ ] All Section 6 budgets pass, and the report is committed under `docs/perf/`.
 - [ ] 8 h parked soak: no RAM growth > 1 MB, CPU within budget. 60 injected turns: no leaks, no crashes.
 
-  > SPEC CHANGE (2026-11-24): 60 injected turns instead of 200. The turns use the owner's Mistral account, and a leak per
+  > SPEC CHANGE (2026-11-24): the 8 h parked soak is skipped for `v1.0.0` at the owner's request. 60 injected turns
+  > instead of 200. The turns use the owner's Mistral account, and a leak per
   > turn shows within 60.
 
 - [ ] Survives: Explorer restart (tray returns), audio device unplug and replug, primary monitor swap, DPI change, sleep/resume.
