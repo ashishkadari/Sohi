@@ -775,7 +775,7 @@ dependencies = [
 
 [[package]]
 name = "sohi"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "log",
  "sohi-audio",
@@ -789,7 +789,7 @@ dependencies = [
 
 [[package]]
 name = "sohi-audio"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "earshot",
  "rtrb",
@@ -798,7 +798,7 @@ dependencies = [
 
 [[package]]
 name = "sohi-core"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "thiserror",
@@ -807,7 +807,7 @@ dependencies = [
 
 [[package]]
 name = "sohi-providers"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "reqwest",
  "serde",
@@ -819,7 +819,7 @@ dependencies = [
 
 [[package]]
 name = "sohi-render"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "sohi-core",
  "tiny-skia",
@@ -827,7 +827,7 @@ dependencies = [
 
 [[package]]
 name = "sohi-tools"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "log",
  "serde_json",
@@ -837,7 +837,7 @@ dependencies = [
 
 [[package]]
 name = "sohi-win"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "sohi-audio",
  "sohi-core",
@@ -1364,7 +1364,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xtask"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "sohi-core",
  "sohi-render",
