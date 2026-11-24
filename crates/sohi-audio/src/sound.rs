@@ -64,10 +64,9 @@ impl Sound {
     /// How loud it is among the others.
     fn level(self) -> f32 {
         match self {
-            Self::Heard | Self::Listen => 0.35,
-            Self::Ask | Self::Error => 0.6,
-            Self::CapeOver | Self::CapeBack => 0.8,
-            Self::Reminder => 1.0,
+            Self::Heard | Self::Listen => 0.7,
+            Self::Ask | Self::Error => 0.8,
+            Self::CapeOver | Self::CapeBack | Self::Reminder => 1.0,
         }
     }
 }
@@ -183,7 +182,7 @@ mod tests {
             let jump = wave
                 .windows(2)
                 .map(|w| (i32::from(w[1]) - i32::from(w[0])).abs());
-            assert!(jump.max().unwrap() < 9_000, "{sound:?}");
+            assert!(jump.max().unwrap() < 14_000, "{sound:?}");
         }
     }
 

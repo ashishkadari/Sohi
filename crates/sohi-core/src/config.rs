@@ -289,7 +289,7 @@ impl Default for SoundsConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            volume: 40,
+            volume: 60,
         }
     }
 }

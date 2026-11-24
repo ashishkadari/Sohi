@@ -55,7 +55,7 @@ speak = true     # say them as well; they are always shown
 
 [sounds]
 enabled = true
-volume = 40      # percent
+volume = 60      # percent
 
 [log]
 level = "info"    # "error" | "warn" | "info" | "debug" | "trace"

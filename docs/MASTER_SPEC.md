@@ -584,7 +584,7 @@ never as instructions, and the system prompt says so.
 [tools]     confirm = ["clipboard_get"]   disabled = []
 [history]   persist = false
 [reminders] speak = true   # P10
-[sounds]    enabled = true   volume = 40   # P11
+[sounds]    enabled = true   volume = 60   # P11
 [log]       level = "info"
 ~~~
 Keys are stored in Credential Manager under targets `Sohi/mistral`, `Sohi/anthropic`, `Sohi/tts`. To set one:
@@ -638,7 +638,7 @@ eminders.json`, plain text, written through a temporary file. A file that cannot
   detector discards it (tested); the question's sound is left out in voice turns, where the mic opens for the answer.
 - **Quiet:** a reminder makes no sound while something else is full screen (§5.10). A new sound replaces the one playing.
   A sound never delays anything: it plays on a thread of its own (§5.5), which ends with it.
-- **Config:** `[sounds] enabled = true`, `volume = 40` (percent).
+- **Config:** `[sounds] enabled = true`, `volume = 60` (percent).
 
 ---
 
