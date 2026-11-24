@@ -177,15 +177,16 @@ impl Head {
         true
     }
 
-    /// The mic level (RMS, 0–1) while listening; the visor follows it
-    /// with a 30 ms attack and 150 ms release (spec §4.2).
+    /// The level (RMS, 0–1) of the mic while listening, or of Sohi's
+    /// speech while speaking; the visor follows it with a 30 ms attack and
+    /// 150 ms release (spec §4.2).
     pub fn set_level(&mut self, rms: f32) {
         self.level_target = display_level(rms);
     }
 
     /// The visor level for a frame drawn at `now`.
     fn visor_level(&mut self, now: Instant) -> f32 {
-        if self.visual != VisualState::Listening {
+        if !matches!(self.visual, VisualState::Listening | VisualState::Speaking) {
             return 0.0;
         }
         let (envelope, last) = &mut self.level;
