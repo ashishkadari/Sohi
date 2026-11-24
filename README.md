@@ -43,7 +43,13 @@ If Mistral fails, Sohi can ask Anthropic for the answer: store a key with `--set
 | type | `Ctrl+Alt+T`, then `Enter` to send, `↑` for your last message, `Esc` to close |
 | go on talking | just speak: after a reply Sohi listens again until 8 s of silence |
 | open full mode | say or type "full mode", or use the tray menu |
+| be reminded | "remind me in 20 minutes to …", "every weekday at 9 …", "what are my reminders?", "cancel reminder 2" |
 | everything else | right-click the tray icon or the head |
+
+**Reminders** are shown, said and sent as a notification, also without the internet. They are kept in
+`%APPDATA%\Sohi\reminders.json` as plain text. While the PC is locked or asleep, or Sohi is not running, they wait and come
+when you are back. While something is full screen they are shown but not said; `speak = false` under `[reminders]` in the
+config never says them. Sohi does not listen after a reminder unless you ask it to.
 
 **Full mode** turns Sohi into a full-screen chat, for longer answers and code. What you type there may get long, formatted
 answers; what you say gets short, spoken ones.
@@ -53,6 +59,7 @@ answers; what you say gets short, spoken ones.
 | send, break the line | `Enter`, `Shift+Enter` |
 | talk, or stop a reply | `Ctrl+M` or the Talk button |
 | copy the last code block | `Ctrl+Shift+C` or Copy code |
+| see your reminders | `Ctrl+R` or Reminders |
 | start a new chat | `Ctrl+N` or New chat |
 | leave | say or type "exit full mode", `Esc` when Sohi is idle, or Exit |
 
