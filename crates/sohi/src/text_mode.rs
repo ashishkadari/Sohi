@@ -15,7 +15,7 @@ use sohi_core::config::{SttConfig, ToolsConfig, TtsConfig};
 use sohi_core::connectivity::{Connectivity, Event as NetEvent};
 use sohi_core::full::{Command, command};
 use sohi_core::geometry::{BASE_DPI, RectPx};
-use sohi_core::history::History;
+use sohi_core::history::{History, Reach};
 use sohi_core::interaction::{ERROR_HOLD, Effect, Event, Interaction, State};
 use sohi_core::persona::{Channel, system_prompt};
 use sohi_core::pill::pill_origin;
@@ -451,7 +451,11 @@ impl TextMode {
                 &sohi_win::local_time(),
                 online,
             ),
-            messages: self.history.messages(),
+            messages: self.history.messages(if self.is_full() {
+                Reach::Long
+            } else {
+                Reach::Short
+            }),
             policy: self.policy.clone(),
         }
     }

@@ -8,6 +8,7 @@ use std::time::Duration;
 use sohi_core::chat::Role;
 use sohi_core::connectivity::State as Net;
 use sohi_core::full::{Command, command};
+use sohi_core::history::Reach;
 use sohi_core::interaction::{Effect, Event, State};
 use sohi_win::FullEvent;
 
@@ -251,7 +252,7 @@ impl TextMode {
             return;
         };
         full.start_over();
-        for message in self.history.messages() {
+        for message in self.history.messages(Reach::Long) {
             match message.role {
                 Role::User => full.begin(&format!("› {}", message.content)),
                 Role::Assistant if !message.content.is_empty() => full.stream(&message.content),

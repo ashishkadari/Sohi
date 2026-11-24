@@ -1,5 +1,6 @@
 //! The conversation history sent with each turn (spec §5.5): a ring
-//! buffer of the last 12 answered turns, capped at about 4k tokens.
+//! buffer of the last answered turns, of which as many are sent as the
+//! turn's [`Reach`] allows.
 //!
 //! Only answered turns are kept. The prompt in flight is held apart until
 //! its reply arrives; if the turn fails or is cancelled the prompt is
@@ -10,10 +11,34 @@ use std::collections::VecDeque;
 
 use crate::chat::{Message, ToolCall, ToolRun};
 
-/// Answered turns kept.
-pub const MAX_TURNS: usize = 12;
-/// About how many tokens of history are sent, the new prompt included.
-pub const TOKEN_BUDGET: usize = 4_000;
+/// How much of the conversation a turn is sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// Spoken turns and the pill: little, so the reply starts soon.
+    Short,
+    /// Full mode: long answers and code. Everything kept is in reach.
+    Long,
+}
+
+impl Reach {
+    /// How many answered turns at most.
+    #[must_use]
+    pub fn turns(self) -> usize {
+        match self {
+            Self::Short => 12,
+            Self::Long => 200,
+        }
+    }
+
+    /// About how many tokens at most, the new prompt included.
+    #[must_use]
+    pub fn tokens(self) -> usize {
+        match self {
+            Self::Short => 4_000,
+            Self::Long => 24_000,
+        }
+    }
+}
 
 /// Longest call (arguments and result) that is remembered, in bytes.
 const MAX_RUN: usize = 600;
@@ -106,11 +131,11 @@ impl History {
             runs,
             reply: reply.into(),
         });
-        while self.turns.len() > MAX_TURNS {
+        while self.turns.len() > Reach::Long.turns() {
             self.turns.pop_front();
         }
         // Stored turns past the budget can never be sent; drop them now.
-        while self.turns.len() > 1 && self.stored_tokens() > TOKEN_BUDGET {
+        while self.turns.len() > 1 && self.stored_tokens() > Reach::Long.tokens() {
             self.turns.pop_front();
         }
     }
@@ -139,17 +164,17 @@ impl History {
     }
 
     /// The messages to send, oldest first, ending with the pending prompt.
-    /// The oldest turns are left out until the whole fits
-    /// [`TOKEN_BUDGET`]; the newest turn and the prompt are always sent,
-    /// so a follow-up to a long reply keeps its context.
+    /// The oldest turns are left out until the whole is within `reach`;
+    /// the newest turn and the prompt are always sent, so a follow-up to a
+    /// long reply keeps its context.
     #[must_use]
-    pub fn messages(&self) -> Vec<Message> {
+    pub fn messages(&self, reach: Reach) -> Vec<Message> {
         let prompt = self.pending.as_deref();
         let mut used = prompt.map_or(0, estimate_tokens);
         let mut keep = 0;
         for turn in self.turns.iter().rev() {
             used += turn.tokens();
-            if keep > 0 && used > TOKEN_BUDGET {
+            if keep > 0 && (used > reach.tokens() || keep == reach.turns()) {
                 break;
             }
             keep += 1;
@@ -199,7 +224,7 @@ mod tests {
         let mut history = History::new();
         answer(&mut history, "Hi", "Hey.");
         history.push_user("Time?");
-        let messages = history.messages();
+        let messages = history.messages(Reach::Short);
         assert_eq!(contents(&messages), ["Hi", "Hey.", "Time?"]);
         let roles: Vec<_> = messages.iter().map(|m| m.role).collect();
         assert_eq!(roles, [Role::User, Role::Assistant, Role::User]);
@@ -212,7 +237,10 @@ mod tests {
         history.push_user("lost");
         history.drop_pending();
         history.push_user("again");
-        assert_eq!(contents(&history.messages()), ["Hi", "Hey.", "again"]);
+        assert_eq!(
+            contents(&history.messages(Reach::Short)),
+            ["Hi", "Hey.", "again"]
+        );
     }
 
     #[test]
@@ -221,7 +249,7 @@ mod tests {
         history.push_user("first");
         history.push_user("second");
         history.push_reply("ok", Vec::new());
-        assert_eq!(contents(&history.messages()), ["second", "ok"]);
+        assert_eq!(contents(&history.messages(Reach::Short)), ["second", "ok"]);
     }
 
     #[test]
@@ -232,14 +260,14 @@ mod tests {
     }
 
     #[test]
-    fn keeps_the_last_twelve_turns() {
+    fn sends_the_last_twelve_turns() {
         let mut history = History::new();
         for i in 0..20 {
             answer(&mut history, &format!("q{i}"), &format!("a{i}"));
         }
-        assert_eq!(history.len(), MAX_TURNS);
-        let messages = history.messages();
-        assert_eq!(messages.len(), MAX_TURNS * 2);
+        assert_eq!(history.len(), 20, "full mode still reaches them");
+        let messages = history.messages(Reach::Short);
+        assert_eq!(messages.len(), 24);
         assert_eq!(messages[0].content, "q8");
         assert_eq!(messages[23].content, "a19");
     }
@@ -253,18 +281,45 @@ mod tests {
             answer(&mut history, &format!("q{i}"), &long);
         }
         history.push_user("next");
-        let messages = history.messages();
+        let messages = history.messages(Reach::Short);
         let tokens: usize = messages.iter().map(|m| estimate_tokens(&m.content)).sum();
-        assert!(tokens <= TOKEN_BUDGET, "{tokens}");
+        assert!(tokens <= Reach::Short.tokens(), "{tokens}");
         assert_eq!(messages.len(), 7);
         assert_eq!(messages[0].content, "q0");
 
         answer(&mut history, "q3", &long);
         answer(&mut history, "q4", &long);
         history.push_user("next");
-        let messages = history.messages();
+        let messages = history.messages(Reach::Short);
         assert_eq!(messages[0].content, "q2");
-        assert_eq!(history.len(), 3, "turns past the budget are not stored");
+        assert_eq!(history.messages(Reach::Long)[0].content, "q0");
+    }
+
+    #[test]
+    fn full_mode_reaches_far_back() {
+        let mut history = History::new();
+        // About 5000 tokens of code, then a long talk about it.
+        answer(&mut history, "code?", &"x".repeat(20_000));
+        for i in 0..60 {
+            answer(&mut history, &format!("q{i}"), &"y".repeat(1_000));
+        }
+        history.push_user("change the first line");
+        assert_eq!(history.messages(Reach::Long)[0].content, "code?");
+        assert_eq!(history.messages(Reach::Short).len(), 25);
+    }
+
+    #[test]
+    fn what_no_turn_can_be_sent_is_not_stored() {
+        let mut history = History::new();
+        for i in 0..40 {
+            answer(&mut history, &format!("q{i}"), &"x".repeat(4_000));
+        }
+        assert!(history.stored_tokens() <= Reach::Long.tokens());
+        assert_eq!(history.len(), 23);
+        for i in 0..300 {
+            answer(&mut history, &format!("r{i}"), "ok");
+        }
+        assert_eq!(history.len(), Reach::Long.turns());
     }
 
     #[test]
@@ -273,9 +328,10 @@ mod tests {
         answer(&mut history, "old", "short");
         answer(&mut history, "essay", &"y".repeat(40_000));
         history.push_user("summarise that");
-        let messages = history.messages();
+        let messages = history.messages(Reach::Short);
         assert_eq!(contents(&messages)[0], "essay");
         assert_eq!(messages.len(), 3);
+        answer(&mut history, "book", &"z".repeat(100_000));
         assert_eq!(history.len(), 1);
     }
 
@@ -298,7 +354,7 @@ mod tests {
             history.push_reply("Paused.", vec![run("{}"), run("{}")]);
         }
         history.push_user("pause");
-        let messages = history.messages();
+        let messages = history.messages(Reach::Short);
         let roles: Vec<_> = messages.iter().map(|m| m.role).collect();
         let turn = [
             Role::User,
@@ -326,7 +382,10 @@ mod tests {
         let mut history = History::new();
         history.push_user("copy this");
         history.push_reply("Copied.", vec![run(&"x".repeat(MAX_RUN))]);
-        assert_eq!(contents(&history.messages()), ["copy this", "Copied."]);
+        assert_eq!(
+            contents(&history.messages(Reach::Short)),
+            ["copy this", "Copied."]
+        );
     }
 
     #[test]
@@ -335,6 +394,6 @@ mod tests {
         answer(&mut history, "Hi", "Hey.");
         history.push_user("pending");
         history.clear();
-        assert_eq!(history.messages(), []);
+        assert_eq!(history.messages(Reach::Short), []);
     }
 }
