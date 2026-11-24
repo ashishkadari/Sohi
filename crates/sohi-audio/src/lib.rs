@@ -4,5 +4,6 @@
 
 pub mod playback;
 pub mod ring;
+pub mod sound;
 pub mod vad;
 pub mod wav;

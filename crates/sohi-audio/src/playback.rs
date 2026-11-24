@@ -19,7 +19,19 @@ const BLOCK_MS: u32 = 20;
 /// Connects a writer and a reader for speech at `sample_rate`.
 #[must_use]
 pub fn playback_ring(sample_rate: u32) -> (PlaybackWriter, PlaybackReader) {
-    let (producer, consumer) = RingBuffer::new(samples(sample_rate, CAPACITY_MS));
+    ring(sample_rate, samples(sample_rate, CAPACITY_MS))
+}
+
+/// A reader of nothing but `clip`.
+#[must_use]
+pub fn playback_clip(clip: &[i16], sample_rate: u32) -> PlaybackReader {
+    let (mut writer, reader) = ring(sample_rate, clip.len().max(1));
+    writer.push(clip);
+    reader
+}
+
+fn ring(sample_rate: u32, capacity: usize) -> (PlaybackWriter, PlaybackReader) {
+    let (producer, consumer) = RingBuffer::new(capacity);
     let level = Arc::new(AtomicU32::new(0));
     (
         PlaybackWriter {
@@ -147,6 +159,16 @@ impl Drop for PlaybackReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_clip_is_read_whole_and_ends() {
+        let mut reader = playback_clip(&[1, 2, 3], 24_000);
+        let mut out = [0; 8];
+        assert_eq!(reader.read(&mut out), 3);
+        assert_eq!(out[..3], [1, 2, 3]);
+        assert!(reader.is_ended());
+        assert!(playback_clip(&[], 24_000).is_ended());
+    }
 
     #[test]
     fn reads_what_was_written_then_silence() {
