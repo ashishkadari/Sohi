@@ -165,6 +165,7 @@ impl TextMode {
             }
             WinEvent::PillFocus(focused) => {
                 let has_input = pill.has_input();
+                pill.set_placeholder(&self.placeholder(focused));
                 self.event(Event::PillFocus { focused, has_input }, head);
             }
             _ => {}
