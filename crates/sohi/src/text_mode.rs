@@ -404,6 +404,7 @@ impl TextMode {
     fn hide_pill(&mut self) {
         if let Some(pill) = &self.pill {
             pill.hide();
+            self.pill_idle = None;
             self.pill_idle = self.start_timer(TIMER_PILL_IDLE, PILL_IDLE);
         }
     }

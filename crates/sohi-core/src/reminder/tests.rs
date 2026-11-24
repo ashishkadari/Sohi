@@ -50,6 +50,7 @@ fn the_moment_is_worked_out() {
         ("19", "tuesday", "2026-11-24 19:00:00"),
         ("9", "tuesday", "2026-12-01 09:00:00"),
         ("9", "Friday", "2026-11-27 09:00:00"),
+        ("9", "next Friday", "2026-11-27 09:00:00"),
         ("9", "", "2026-11-25 09:00:00"),
     ] {
         let when = When::At(clock(time), day(text));

@@ -108,7 +108,7 @@ impl FromStr for Day {
             "" => Self::Next,
             "today" => Self::Ahead(0),
             "tomorrow" => Self::Ahead(1),
-            other => match weekday_named(other) {
+            other => match weekday_named(other.trim_start_matches("next ")) {
                 Some(day) => Self::Weekday(day),
                 None => Self::On(other.parse()?),
             },

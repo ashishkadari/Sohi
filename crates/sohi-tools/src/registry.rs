@@ -98,7 +98,7 @@ impl Tool {
             ),
             Self::ReminderSet => (
                 "Set a reminder or a timer; the user is told when it is due. For a span of time give in_minutes (also fractions); otherwise give time, and day unless it is simply the next time the clock shows that time.",
-                r#"{"type":"object","properties":{"text":{"type":"string","description":"What to remember, at most 120 characters, as it will be said to the user, e.g. call the dentist"},"in_minutes":{"type":"number"},"time":{"type":"string","description":"24-hour HH:MM"},"day":{"type":"string","description":"today, tomorrow, a weekday such as friday, or YYYY-MM-DD"},"repeat":{"type":"string","enum":["once","daily","weekdays","weekly"]}},"required":["text"]}"#,
+                r#"{"type":"object","properties":{"text":{"type":"string","description":"What to remember, at most 120 characters, as it will be said to the user, e.g. call the dentist"},"in_minutes":{"type":"number"},"time":{"type":"string","description":"24-hour HH:MM"},"day":{"type":"string","description":"today, tomorrow, a weekday by its name (friday, not its date), or YYYY-MM-DD"},"repeat":{"type":"string","enum":["once","daily","weekdays","weekly"],"description":"weekdays is Monday to Friday, for every weekday"}},"required":["text"]}"#,
             ),
             Self::ReminderList => (
                 "List the user's reminders with their numbers and times. Call it every time you are asked: reminders go when they are due.",

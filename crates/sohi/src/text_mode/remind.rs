@@ -72,6 +72,9 @@ impl TextMode {
     fn wait(&mut self, least: Duration) {
         let next = self.reminding.agenda.next_at();
         self.reminding.armed = next;
+        // Dropping it after the new one was started would stop that: they
+        // share an id.
+        self.reminding.timer = None;
         self.reminding.timer = next.filter(|_| !self.reminding.away).and_then(|at| {
             let seconds = at.since(sohi_win::local_stamp());
             let wait = Duration::from_secs(u64::try_from(seconds).unwrap_or(0));

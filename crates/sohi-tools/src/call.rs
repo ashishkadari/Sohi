@@ -322,6 +322,12 @@ mod tests {
                 at("9", "friday"),
                 Repeat::Weekly,
             ),
+            // Models also put it here.
+            (
+                r#""time":"9:00","day":"weekdays","repeat":"once""#,
+                at("9", ""),
+                Repeat::Weekdays,
+            ),
             // Models fill in what they do not need.
             (
                 r#""in_minutes":0,"time":"21:00","day":null,"repeat":null"#,
@@ -349,6 +355,12 @@ mod tests {
         ] {
             bad("reminder_set", args);
         }
+        let summary = set(When::In(90), Repeat::Once).summary();
+        assert_eq!(summary, "remind you in 2 min: tea");
+    }
+
+    #[test]
+    fn other_reminder_calls() {
         good("reminder_list", "", &Call::ReminderList);
         let id = 2;
         good(
@@ -363,8 +375,6 @@ mod tests {
         );
         bad("reminder_cancel", "{}");
         bad("reminder_cancel", r#"{"number":-2}"#);
-        let summary = set(When::In(90), Repeat::Once).summary();
-        assert_eq!(summary, "remind you in 2 min: tea");
     }
 
     #[test]

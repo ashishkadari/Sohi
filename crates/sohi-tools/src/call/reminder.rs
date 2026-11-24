@@ -41,6 +41,15 @@ fn minutes(args: &Map<String, Value>) -> Result<Option<f64>, CallError> {
     }
 }
 
+/// The repetition some models write into `day`.
+fn repeat_in_day(day: &str) -> Option<Repeat> {
+    match day.to_ascii_lowercase().as_str() {
+        "weekday" | "weekdays" | "every weekday" => Some(Repeat::Weekdays),
+        "daily" | "every day" | "everyday" => Some(Repeat::Daily),
+        _ => None,
+    }
+}
+
 /// When a reminder is wanted.
 pub(super) fn when(args: &Map<String, Value>) -> Result<When, CallError> {
     if let Some(minutes) = minutes(args)? {
@@ -55,14 +64,21 @@ pub(super) fn when(args: &Map<String, Value>) -> Result<When, CallError> {
     let clock = time
         .parse()
         .map_err(|_| bad("\"time\" must be HH:MM, 24-hour"))?;
-    let day: Day = optional(args, "day")?
+    let day = optional(args, "day")?;
+    if repeat_in_day(day).is_some() {
+        return Ok(When::At(clock, Day::Next));
+    }
+    let day = day
         .parse()
-        .map_err(|_| bad("\"day\" must be today, tomorrow, a weekday or YYYY-MM-DD"))?;
+        .map_err(|_| bad("\"day\" must be today, tomorrow, a weekday's name or YYYY-MM-DD; for every weekday use \"repeat\""))?;
     Ok(When::At(clock, day))
 }
 
 /// How often.
 pub(super) fn repeat(args: &Map<String, Value>) -> Result<Repeat, CallError> {
+    if let Some(repeat) = repeat_in_day(optional(args, "day")?) {
+        return Ok(repeat);
+    }
     Repeat::named(optional(args, "repeat")?)
         .ok_or_else(|| bad("\"repeat\" must be once, daily, weekdays or weekly"))
 }
