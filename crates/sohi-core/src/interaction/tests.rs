@@ -237,7 +237,7 @@ fn every_event_in_every_state_is_handled() {
 }
 
 fn listening(m: &mut Interaction) -> u64 {
-    let effects = m.step(Event::VoiceWake);
+    let effects = m.step(Event::VoiceWake { focus: true });
     let State::Listening { turn } = m.state() else {
         panic!("not listening: {:?}", m.state());
     };
@@ -248,7 +248,7 @@ fn listening(m: &mut Interaction) -> u64 {
 #[test]
 fn a_voice_wake_reveals_and_listens() {
     let mut m = Interaction::new();
-    let effects = m.step(Event::VoiceWake);
+    let effects = m.step(Event::VoiceWake { focus: true });
     assert_eq!(
         effects,
         [
@@ -312,7 +312,7 @@ fn no_speech_retracts_and_the_hotkey_again_stops() {
     assert_eq!(m.state(), State::Idle);
 
     let turn = listening(&mut m);
-    let effects = m.step(Event::VoiceWake);
+    let effects = m.step(Event::VoiceWake { focus: true });
     assert_eq!(effects[0], Effect::CancelTurn { turn });
     assert!(effects.contains(&Effect::Retract));
     assert_eq!(m.state(), State::Idle);
@@ -322,7 +322,7 @@ fn no_speech_retracts_and_the_hotkey_again_stops() {
 fn a_voice_wake_while_busy_barges_in() {
     let mut m = Interaction::new();
     let text_turn = submitted(&mut m, "hello");
-    let effects = m.step(Event::VoiceWake);
+    let effects = m.step(Event::VoiceWake { focus: true });
     assert_eq!(effects[0], Effect::CancelTurn { turn: text_turn });
     assert!(effects.contains(&Effect::HidePill));
     assert!(!effects.contains(&Effect::Retract));
@@ -497,7 +497,7 @@ fn the_reply_keeps_arriving_while_spoken() {
 
 #[test]
 fn a_wake_or_a_click_barges_in() {
-    for event in [Event::VoiceWake, Event::HeadClicked] {
+    for event in [Event::VoiceWake { focus: true }, Event::HeadClicked] {
         let mut m = Interaction::new().with_follow_up(true);
         let turn = speaking(&mut m);
         let effects = m.step(event);
@@ -527,7 +527,7 @@ fn the_mic_stays_closed_while_speaking() {
         [
             Event::TextHotkey,
             Event::HeadClicked,
-            Event::VoiceWake,
+            Event::VoiceWake { focus: true },
             Event::TextSubmitted("t".into()),
             Event::SpeechStarted { turn },
             Event::SpeechEnded { turn },
@@ -593,4 +593,56 @@ fn escape_stops_speaking() {
     assert_eq!(effects[0], Effect::CancelTurn { turn });
     assert!(effects.contains(&Effect::Retract));
     assert_eq!(m.state(), State::Idle);
+}
+
+#[test]
+fn an_offline_wake_opens_the_pill() {
+    for (focus, rule) in [
+        (true, RetractRule::TextFocused),
+        (false, RetractRule::TextReplyUnfocused),
+    ] {
+        let mut m = Interaction::new().with_follow_up(true);
+        m.set_voice_available(false);
+        assert_eq!(
+            m.step(Event::VoiceWake { focus }),
+            [Effect::Reveal(rule), Effect::ShowPill { focus }]
+        );
+        assert_eq!(m.state(), State::TextEntry);
+        // Again: only brings the pill forward.
+        assert_eq!(
+            m.step(Event::VoiceWake { focus: true }),
+            [Effect::ShowPill { focus: true }]
+        );
+        // Back online, a wake listens.
+        m.set_voice_available(true);
+        let effects = m.step(Event::VoiceWake { focus: true });
+        assert!(effects.contains(&Effect::StartListening { turn: 1 }));
+    }
+}
+
+#[test]
+fn going_offline_during_a_reply_stops_the_follow_up() {
+    let mut m = Interaction::new().with_follow_up(true);
+    let turn = speaking(&mut m);
+    m.set_voice_available(false);
+    m.step(Event::LlmDone { turn });
+    m.step(Event::PlaybackDone { turn });
+    assert_eq!(m.state(), State::TextEntry);
+}
+
+#[test]
+fn an_offline_wake_during_a_reply_stops_it_and_opens_the_pill() {
+    for event in [Event::VoiceWake { focus: true }, Event::HeadClicked] {
+        let mut m = Interaction::new();
+        let turn = speaking(&mut m);
+        m.set_voice_available(false);
+        let effects = m.step(event);
+        assert_eq!(effects[0], Effect::CancelTurn { turn });
+        assert_eq!(effects.last(), Some(&Effect::ShowPill { focus: true }));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::StartListening { .. }))
+        );
+    }
 }

@@ -11,7 +11,10 @@ mod dev;
 mod head;
 mod hotkeys;
 mod logger;
+mod offline;
+mod offline_flag;
 mod perf;
+mod probe;
 mod runtime;
 mod set_key;
 mod speak;
@@ -116,12 +119,14 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     let paths = app::Paths {
         config: config_file::default_path(),
         logs: logger::default_dir(),
+        offline_flag: config_file::default_path().with_file_name(offline_flag::NAME),
     };
     let options = app::Options {
         reduced_motion: config.ui.reduced_motion,
         perf: args.perf.is_some(),
         wake: config.wake.clone(),
         llm_model: config.llm.model.clone(),
+        offline_model: config.llm.offline_model.clone(),
         llm_fallback_model: config.llm.anthropic_fallback().to_owned(),
         user_name: config.persona.user_name.clone(),
         stt: config.stt.clone(),

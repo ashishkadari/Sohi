@@ -369,6 +369,7 @@ mod tests {
                 turn,
                 model: LlmConfig::default().model,
                 fallback_model: String::new(),
+                offline: None,
                 system: system_prompt(Channel::Spoken, "", &sohi_win::local_time()),
                 messages: Vec::new(),
             };

@@ -17,6 +17,8 @@ use crate::{ChatRequest, ProviderError};
 
 /// The public API.
 pub const BASE_URL: &str = "https://api.mistral.ai";
+/// The models list, which also serves as a probe.
+pub(crate) const MODELS_PATH: &str = "/v1/models";
 /// Spec §9.2: the first byte of a reply within 8 s, later chunks within 15 s.
 pub const FIRST_BYTE: Duration = Duration::from_secs(8);
 /// See [`FIRST_BYTE`].
@@ -88,7 +90,7 @@ impl Mistral {
         key: &Secret,
         timeout: Duration,
     ) -> Result<Vec<String>, ProviderError> {
-        let url = format!("{}/v1/models", self.base_url);
+        let url = format!("{}{MODELS_PATH}", self.base_url);
         let exchange = async {
             self.http
                 .get(&url, Auth::Bearer(key), timeout)

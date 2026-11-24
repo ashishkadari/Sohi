@@ -4,9 +4,11 @@
 
 pub mod chat;
 pub mod config;
+pub mod connectivity;
 pub mod geometry;
 pub mod history;
 pub mod hotkey;
+pub mod intent;
 pub mod interaction;
 pub mod meter;
 pub mod motion;

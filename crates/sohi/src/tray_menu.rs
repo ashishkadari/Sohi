@@ -5,11 +5,11 @@ use sohi_win::MenuItem;
 /// What a menu choice asks the app to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuCommand {
-    /// Start a voice turn (P2+).
+    /// Start a voice turn.
     Talk,
-    /// Open text mode (P3).
+    /// Open text mode.
     Type,
-    /// Toggle forced offline (P6).
+    /// Toggle forced offline.
     ForceOffline,
     /// Open `config.toml`.
     OpenConfig,
@@ -65,12 +65,12 @@ pub fn items(state: MenuState) -> [MenuItem<'static>; 9] {
         checked,
     };
     [
-        cmd(MenuCommand::Talk, "Talk", false, None),
-        cmd(MenuCommand::Type, "Type", false, None),
+        cmd(MenuCommand::Talk, "Talk", true, None),
+        cmd(MenuCommand::Type, "Type", true, None),
         cmd(
             MenuCommand::ForceOffline,
             "Force offline",
-            false,
+            true,
             Some(state.force_offline),
         ),
         MenuItem::Separator,
@@ -130,6 +130,9 @@ mod tests {
         assert_eq!(
             enabled,
             [
+                MenuCommand::Talk,
+                MenuCommand::Type,
+                MenuCommand::ForceOffline,
                 MenuCommand::OpenConfig,
                 MenuCommand::OpenLogFolder,
                 MenuCommand::Quit

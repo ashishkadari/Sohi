@@ -5,15 +5,19 @@
 //! The pill window and the runtime thread are created on first use. The
 //! pill is destroyed after 5 minutes hidden, to give its memory back.
 
+mod net;
+
 use std::time::{Duration, Instant};
 
 use sohi_core::config::{SttConfig, TtsConfig};
+use sohi_core::connectivity::{Connectivity, Event as NetEvent};
 use sohi_core::geometry::{BASE_DPI, RectPx};
 use sohi_core::history::History;
 use sohi_core::interaction::{ERROR_HOLD, Effect, Event, Interaction, State};
 use sohi_core::persona::{Channel, system_prompt};
 use sohi_core::pill::pill_origin;
 use sohi_core::visibility::{Input, Phase};
+use sohi_core::visual::VisualState;
 use sohi_win::{
     AppTimer, EventQueue, HotkeyHost, HotkeyRegistration, PillWindow, RemoteWindow, TimerHost,
     WinEvent,
@@ -28,6 +32,8 @@ use crate::runtime::Runtime;
 pub const TIMER_PILL_IDLE: usize = 1;
 /// See [`TIMER_PILL_IDLE`].
 pub const TIMER_ERROR_HOLD: usize = 2;
+/// See [`TIMER_PILL_IDLE`].
+pub const TIMER_BACKOFF: usize = 3;
 
 /// How long a hidden pill is kept before it is destroyed.
 const PILL_IDLE: Duration = Duration::from_mins(5);
@@ -38,6 +44,8 @@ pub struct TextSettings {
     pub model: String,
     /// The Anthropic fallback model; empty for none.
     pub fallback_model: String,
+    /// The Ollama model for offline turns; empty for none.
+    pub offline_model: String,
     /// `[persona] user_name`.
     pub user_name: String,
     /// `[stt]`.
@@ -46,6 +54,10 @@ pub struct TextSettings {
     pub tts: TtsConfig,
     /// `[wake] follow_up`.
     pub follow_up: bool,
+    /// `[wake] hotkey_text`.
+    pub hotkey_text: String,
+    /// Start forced offline.
+    pub forced_offline: bool,
 }
 
 /// Text mode's state.
@@ -64,6 +76,10 @@ pub struct TextMode {
     escape: Option<HotkeyRegistration>,
     pill_idle: Option<AppTimer>,
     error_hold: Option<AppTimer>,
+    net: Connectivity,
+    backoff: Option<AppTimer>,
+    /// When a wake found Sohi offline (see [`net`]).
+    offline_wake: Option<Instant>,
     head_rect: RectPx,
     dpi: u32,
     settings: TextSettings,
@@ -78,8 +94,11 @@ impl TextMode {
         hotkeys: HotkeyHost,
         settings: TextSettings,
     ) -> Self {
+        let net = Connectivity::new(settings.forced_offline);
+        let mut interaction = Interaction::new().with_follow_up(settings.follow_up);
+        interaction.set_voice_available(net.state().is_usable());
         Self {
-            interaction: Interaction::new().with_follow_up(settings.follow_up),
+            interaction,
             pill: None,
             runtime: None,
             history: History::new(),
@@ -91,6 +110,9 @@ impl TextMode {
             escape: None,
             pill_idle: None,
             error_hold: None,
+            net,
+            backoff: None,
+            offline_wake: None,
             head_rect: RectPx::default(),
             dpi: BASE_DPI,
             settings,
@@ -143,6 +165,7 @@ impl TextMode {
             }
             WinEvent::PillFocus(focused) => {
                 let has_input = pill.has_input();
+                pill.set_placeholder(&self.placeholder(focused));
                 self.event(Event::PillFocus { focused, has_input }, head);
             }
             _ => {}
@@ -156,7 +179,9 @@ impl TextMode {
             None => return,
         };
         for update in updates {
+            self.learn(&update, head);
             let event = match update {
+                Update::Probed { .. } => continue,
                 Update::Level { turn, level } => {
                     if self.is_current(turn) {
                         head.set_level(level);
@@ -216,6 +241,11 @@ impl TextMode {
                 }
                 true
             }
+            TIMER_BACKOFF => {
+                self.backoff = None;
+                self.net(NetEvent::BackoffElapsed, head);
+                true
+            }
             TIMER_ERROR_HOLD => {
                 self.error_hold = None;
                 self.event(Event::ErrorShown, head);
@@ -226,8 +256,10 @@ impl TextMode {
     }
 
     /// Closes text mode if the head went away on its own (a retract rule
-    /// fired, the voice hotkey, or the session locked).
+    /// fired, the voice hotkey, or the session locked), and tells
+    /// Connectivity whether the head is out.
     pub fn follow_head(&mut self, head: &mut Head) {
+        self.net_shown(head.phase() != Phase::Parked, head);
         let gone = matches!(head.phase(), Phase::Retracting | Phase::Parked);
         if gone && self.interaction.state() != State::Idle {
             self.event(Event::HeadGone, head);
@@ -261,6 +293,7 @@ impl TextMode {
             Effect::StartTurn { turn, text } => return self.start_turn(turn, text),
             Effect::StartListening { turn } => return self.start_listening(turn),
             Effect::CancelTurn { turn } => self.cancel_turn(turn),
+            Effect::SetVisual(VisualState::Idle) => head.set_visual(self.base_visual()),
             Effect::SetVisual(visual) => head.set_visual(visual),
             Effect::FlashError => head.flash_error(),
             Effect::StartErrorTimer => {
@@ -281,7 +314,6 @@ impl TextMode {
         if self.pill.is_none() {
             match PillWindow::create(self.queue.clone(), self.dpi) {
                 Ok(pill) => {
-                    pill.set_placeholder("Type a message…");
                     self.pill = Some(pill);
                     log::info!("pill created");
                 }
@@ -293,6 +325,7 @@ impl TextMode {
         }
         let (x, y, _) = pill_origin(self.head_rect, self.dpi);
         self.with_pill(|pill| {
+            pill.set_placeholder(&self.placeholder(focus));
             pill.set_origin(x, y);
             pill.show(focus);
         });
@@ -353,6 +386,7 @@ impl TextMode {
             turn,
             model: self.settings.model.clone(),
             fallback_model: self.settings.fallback_model.clone(),
+            offline: (!self.net.state().is_usable()).then(|| self.settings.offline_model.clone()),
             system: system_prompt(channel, &self.settings.user_name, &sohi_win::local_time()),
             messages: self.history.messages(),
         }

@@ -24,6 +24,12 @@ pub enum WinEvent {
     /// The session locked or unlocked, the display turned off or on, or
     /// the system is suspending or resumed.
     Presence(Presence),
+    /// Windows reports that internet access may have come or gone
+    /// (advisory; see `NetworkWatch`).
+    NetworkHint {
+        /// Whether there is internet access.
+        internet: bool,
+    },
     /// A registered global hotkey was pressed.
     Hotkey {
         /// The id it was registered under.
