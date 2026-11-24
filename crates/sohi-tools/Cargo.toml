@@ -5,7 +5,15 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[features]
+# The `shell_exec` tool (spec §5.6). Off by default: runs any command.
+shell = ["sohi-win/shell"]
+
 [dependencies]
+log.workspace = true
+serde_json.workspace = true
+sohi-core.workspace = true
+sohi-win.workspace = true
 
 [lints]
 workspace = true

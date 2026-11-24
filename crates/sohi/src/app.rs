@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use sohi_core::config::{ReducedMotion, SttConfig, TtsConfig, WakeConfig};
+use sohi_core::config::{ReducedMotion, SttConfig, ToolsConfig, TtsConfig, WakeConfig};
 use sohi_core::connectivity::Event as NetEvent;
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::interaction::Event as TextEvent;
@@ -53,6 +53,8 @@ pub struct Options {
     pub stt: SttConfig,
     /// `[tts]`.
     pub tts: TtsConfig,
+    /// `[tools]`.
+    pub tools: ToolsConfig,
 }
 
 /// Everything the UI thread owns.
@@ -121,6 +123,7 @@ impl App {
                 user_name: options.user_name.clone(),
                 stt: options.stt.clone(),
                 tts: options.tts.clone(),
+                tools: options.tools.clone(),
                 follow_up: options.wake.follow_up,
                 hotkey_text: options.wake.hotkey_text.clone(),
                 forced_offline,

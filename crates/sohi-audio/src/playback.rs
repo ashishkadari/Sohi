@@ -55,6 +55,12 @@ impl PlaybackWriter {
         written.len()
     }
 
+    /// Whether samples are still waiting to be played.
+    #[must_use]
+    pub fn is_pending(&self) -> bool {
+        self.producer.slots() < self.producer.buffer().capacity()
+    }
+
     /// Whether the render thread is gone.
     #[must_use]
     pub fn is_closed(&self) -> bool {
@@ -151,6 +157,16 @@ mod tests {
         assert_eq!(out, [1, 2, 3, 0, 0]);
         assert_eq!(reader.read(&mut out), 0);
         assert_eq!(out, [0; 5]);
+    }
+
+    #[test]
+    fn knows_whether_samples_wait() {
+        let (mut writer, mut reader) = playback_ring(16_000);
+        assert!(!writer.is_pending());
+        writer.push(&[1; 10]);
+        assert!(writer.is_pending());
+        reader.read(&mut [0; 10]);
+        assert!(!writer.is_pending());
     }
 
     #[test]

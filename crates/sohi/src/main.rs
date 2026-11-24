@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 #![windows_subsystem = "windows"]
 
+mod actions;
 mod app;
 mod chat;
 mod config_file;
@@ -15,6 +16,7 @@ mod offline;
 mod offline_flag;
 mod perf;
 mod probe;
+mod reply;
 mod runtime;
 mod set_key;
 mod speak;
@@ -22,12 +24,14 @@ mod stt;
 mod text_mode;
 mod tray_menu;
 mod voice;
+mod yes_no;
 
 use std::process::ExitCode;
 use std::time::Duration;
 
 use std::rc::Rc;
 
+use sohi_tools::helper;
 use sohi_win::{AppWindow, EventQueue, FrameTimer, SingleInstance};
 
 /// Named mutex that marks the running instance (spec §5.8).
@@ -51,6 +55,31 @@ struct Args {
     perf: Option<Duration>,
     /// `--set-key <name>`: store an API key, then exit (spec §5.7).
     set_key: Option<String>,
+    /// Do one thing with the shell, then exit (see `sohi_tools::helper`).
+    helper: Option<Helper>,
+}
+
+/// What a helper process is for.
+#[derive(Debug, PartialEq, Eq)]
+enum Helper {
+    Open(String),
+    List,
+    Media(String),
+}
+
+impl Helper {
+    fn run(&self) -> ExitCode {
+        let worked = match self {
+            Self::Open(target) => helper::run_open(target),
+            Self::List => helper::run_list(),
+            Self::Media(action) => return ExitCode::from(helper::run_media(action)),
+        };
+        if worked {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        }
+    }
 }
 
 impl Args {
@@ -60,6 +89,9 @@ impl Args {
         let mut args = args;
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                helper::OPEN => parsed.helper = args.next().map(Helper::Open),
+                helper::MEDIA => parsed.helper = args.next().map(Helper::Media),
+                helper::LIST => parsed.helper = Some(Helper::List),
                 "--set-key" => parsed.set_key = Some(args.next().unwrap_or_default()),
                 "--test-panic" => parsed.test_panic = true,
                 "--dev-test-card" => parsed.dev_test_card = true,
@@ -87,6 +119,9 @@ fn main() -> ExitCode {
 
 fn run() -> Result<ExitCode, sohi_win::WinError> {
     let (args, unknown) = Args::parse(std::env::args().skip(1));
+    if let Some(helper) = &args.helper {
+        return Ok(helper.run());
+    }
     if let Some(name) = &args.set_key {
         // A one-off action: no window, no log and no single-instance check,
         // so it also works while Sohi is running.
@@ -131,6 +166,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         user_name: config.persona.user_name.clone(),
         stt: config.stt.clone(),
         tts: config.tts.clone(),
+        tools: config.tools.clone(),
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {

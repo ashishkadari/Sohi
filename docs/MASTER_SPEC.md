@@ -497,13 +497,41 @@ async fn run_turn(input: TurnInput, cancel: CancelToken, ctx: &Ctx) -> Result<()
 | `open_url` | `url` | `http`/`https` only, validated → `ShellExecuteW` | allow (URL shown in bubble) |
 | `clipboard_get` | – | `GetClipboardData(CF_UNICODETEXT)`, truncated to 8 KB | **confirm** (content goes to a cloud LLM) |
 | `clipboard_set` | `text` | `SetClipboardData` | allow |
-| `media` | `play_pause\|next\|prev\|mute` | `SendInput` media virtual keys | allow |
+| `media` | `play\|pause\|next\|prev\|mute` | Windows media sessions (`Windows.Media.Control`); `SendInput` for mute | allow |
 | `volume` | `up\|down\|set(0-100)` | `IAudioEndpointVolume` | allow |
 | `shell_exec` | `command` | **Compiled out unless `--features shell`.** Runs via `CreateProcessW` with no window, 15 s timeout, output capped at 4 KB | **always confirm (cannot be overridden)** |
 
 Confirmation flow: the pill shows `Run: <summary>? Enter = Yes · Esc = No`. A voice "yes/no" is accepted by opening the mic
 for 4 s (STT + a fixed yes/no matcher). Silence or a 10 s timeout counts as **No**. Tool outputs are passed to the LLM as **data**,
 never as instructions, and the system prompt says so.
+
+> SPEC CHANGE (2026-11-24): the app index also reads the shell's apps folder (`shell:AppsFolder`). On the dev laptop about
+> 60 of 220 Start Menu entries have no `.lnk` (Calculator, Settings, Photos and every other Store app). Uninstallers are
+> left out of the index, and `App Paths` entries are found only by their exact name.
+
+> SPEC CHANGE (2026-11-24): `ShellExecuteW` and the apps folder are used from a short-lived helper, Sohi's own executable
+> started with `--open <target>` or `--list-apps`. Each loads about 36 DLLs that would stay in the process for good
+> (measured: working set 25 → 44 MB after one `launch_app`).
+
+> SPEC CHANGE (2026-11-24): `media` takes `play` and `pause` instead of `play_pause`, and uses Windows' media sessions
+> instead of media keys. The play/pause key only switches, so "pause" could start the music, and nobody learned whether
+> a player reacted. `pause` pauses every player that plays; the result says if nothing was playing, no player was open or
+> the player did not react. This runs in the helper (`--media <action>`). If Windows lists no player, `play` still
+> presses the key, for players that are listed only once they have played.
+
+> SPEC CHANGE (2026-11-24): the history keeps the tool calls of an answered turn with their results, but no text from
+> outside, no call made after the turn read some, and none over 600 bytes. Remembering only the replies, models read that
+> "pause music" had been answered with "Paused." alone, and did the same without calling the tool.
+
+> SPEC CHANGE (2026-11-24): once a turn has read text from outside (`clipboard_get`, `shell_exec`), **every** later call of
+> that turn is confirmed, whatever `[tools]` says. Otherwise text on the clipboard could have the model open an address
+> that carries the clipboard away. A permit type enforces this: the executor takes nothing else. In a turn the model may
+> call tools over at most 5 rounds. Enter is a yes only with an empty input and not within 400 ms of the question; typed
+> text that is not a plain yes is a no. The question never takes the keyboard.
+
+> SPEC CHANGE (2026-11-24): in a voice turn the mic opens for an answer only after everything written so far was said
+> (half-duplex). Silence, or speech that is not a plain yes or no, leaves the question open for the keys until the 10 s
+> are over, and then counts as No.
 
 ### 5.7 Config & secrets
 `%APPDATA%\Sohi\config.toml`. On first run, write it with defaults and comments. The config is re-read when the user picks
@@ -907,11 +935,18 @@ minimum granularity, not a cap.
    `voxtral-mini-tts-3`; first audio about 0.4 s. `GET /v1/audio/voices` lists the voices. US-English female:
    Sheila `voice_478`, Margaret `voice_447`, and Jane `gb_jane_*` in several moods, tagged `en_us` but with a `gb_` id.)*
 3. Mistral function-calling schema and streaming tool-call delta format.
+   *(Verified 2026-11-24 live with `mistral-small-latest`: `tools: [{type: "function", function: {name, description,
+   parameters}}]`; all calls arrive whole in one event's `delta.tool_calls` (`id` of 9 letters and digits, `index`,
+   `function.name`, `function.arguments` as a JSON string), then `[DONE]`. Results go back as `role: "tool"` with
+   `tool_call_id`, after the assistant message with its `tool_calls`.)*
 4. Anthropic Messages API current model IDs and streaming event types for tool use. *(Text streaming verified 2026-11-22:
    `POST /v1/messages`, `x-api-key`, `anthropic-version: 2026-10-21` (no `temperature`/`top_p`/`top_k` on that version),
    text in `content_block_delta`/`text_delta`, end at `message_stop`, mid-stream `error` events, `ping`. Current cheap tier:
-   `claude-haiku-5-5`. Tool-use events still to verify in P7.)*
-5. Ollama `/api/chat` tool-calling support for the chosen offline model.
+   `claude-haiku-5-5`.) (Tool use implemented 2026-11-24 from the documentation and tested against mocks only, as no
+   Anthropic key is stored: `tool_use` blocks whose input arrives as `input_json_delta`, `tool_result` blocks in one user
+   message, the assistant's blocks sent back unchanged, thinking included.)*
+5. Ollama `/api/chat` tool-calling support for the chosen offline model. *(2026-11-24: not used. Offline commands run
+   through the grammar of §5.3; Ollama answers the rest without tools. Ollama is not installed on the dev laptop.)*
 6. ~~Maintenance status of the `webrtc-vad` (or `fvad`) crate and whether it builds under MSVC.~~ *(Resolved
    2026-11-22: unmaintained since 2019; replaced by `earshot`, see §2.2.)*
 7. `NotifyNetworkConnectivityHintChange` behaviour on Win11 builds in use.

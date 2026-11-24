@@ -8,12 +8,15 @@
 
 use std::collections::VecDeque;
 
-use crate::chat::Message;
+use crate::chat::{Message, ToolCall, ToolRun};
 
 /// Answered turns kept.
 pub const MAX_TURNS: usize = 12;
 /// About how many tokens of history are sent, the new prompt included.
 pub const TOKEN_BUDGET: usize = 4_000;
+
+/// Longest call (arguments and result) that is remembered, in bytes.
+const MAX_RUN: usize = 600;
 
 /// A rough token count: about 4 characters per token, plus a few tokens
 /// of per-message framing. Good enough for a cap; no tokenizer is bundled.
@@ -25,12 +28,49 @@ pub fn estimate_tokens(text: &str) -> usize {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Turn {
     user: String,
+    /// The tools Sohi used. Without them it would read that "pause" was
+    /// once answered with words alone, and do the same again.
+    runs: Vec<ToolRun>,
     reply: String,
 }
 
 impl Turn {
     fn tokens(&self) -> usize {
-        estimate_tokens(&self.user) + estimate_tokens(&self.reply)
+        let runs = self.runs.iter().map(|run| {
+            estimate_tokens(&run.call.arguments)
+                + estimate_tokens(&run.call.name)
+                + estimate_tokens(&run.result)
+        });
+        estimate_tokens(&self.user) + runs.sum::<usize>() + estimate_tokens(&self.reply)
+    }
+
+    /// Its messages. The calls get ids every provider accepts (Mistral
+    /// takes nine letters and digits only), counted up in `calls`.
+    fn write(&self, messages: &mut Vec<Message>, calls: &mut usize) {
+        messages.push(Message::user(self.user.clone()));
+        let runs: Vec<_> = self
+            .runs
+            .iter()
+            .map(|run| {
+                *calls += 1;
+                let id = format!("call{calls:05}");
+                (
+                    ToolCall {
+                        id,
+                        ..run.call.clone()
+                    },
+                    &run.result,
+                )
+            })
+            .collect();
+        if !runs.is_empty() {
+            let calls = runs.iter().map(|(call, _)| call.clone()).collect();
+            messages.push(Message::calls("", calls, None));
+            for (call, result) in runs {
+                messages.push(Message::tool_result(call.id, result.clone()));
+            }
+        }
+        messages.push(Message::assistant(self.reply.clone()));
     }
 }
 
@@ -54,14 +94,16 @@ impl History {
         self.pending = Some(text.into());
     }
 
-    /// The reply to the pending prompt arrived: keep the pair. Ignored if no
-    /// prompt is pending.
-    pub fn push_reply(&mut self, reply: impl Into<String>) {
+    /// The reply to the pending prompt arrived, after the calls `runs`: keep
+    /// them. Ignored if no prompt is pending. Very long calls are not kept.
+    pub fn push_reply(&mut self, reply: impl Into<String>, mut runs: Vec<ToolRun>) {
+        runs.retain(|run| run.call.arguments.len() + run.result.len() <= MAX_RUN);
         let Some(user) = self.pending.take() else {
             return;
         };
         self.turns.push_back(Turn {
             user,
+            runs,
             reply: reply.into(),
         });
         while self.turns.len() > MAX_TURNS {
@@ -114,9 +156,9 @@ impl History {
         }
         let first = self.turns.len() - keep;
         let mut messages = Vec::with_capacity(keep * 2 + 1);
+        let mut calls = 0;
         for turn in self.turns.iter().skip(first) {
-            messages.push(Message::user(turn.user.clone()));
-            messages.push(Message::assistant(turn.reply.clone()));
+            turn.write(&mut messages, &mut calls);
         }
         if let Some(prompt) = prompt {
             messages.push(Message::user(prompt));
@@ -132,11 +174,11 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat::Role;
+    use crate::chat::{Role, without_calls};
 
     fn answer(history: &mut History, user: &str, reply: &str) {
         history.push_user(user);
-        history.push_reply(reply);
+        history.push_reply(reply, Vec::new());
     }
 
     fn contents(messages: &[Message]) -> Vec<&str> {
@@ -178,14 +220,14 @@ mod tests {
         let mut history = History::new();
         history.push_user("first");
         history.push_user("second");
-        history.push_reply("ok");
+        history.push_reply("ok", Vec::new());
         assert_eq!(contents(&history.messages()), ["second", "ok"]);
     }
 
     #[test]
     fn a_reply_without_a_prompt_is_ignored() {
         let mut history = History::new();
-        history.push_reply("stray");
+        history.push_reply("stray", Vec::new());
         assert!(history.is_empty());
     }
 
@@ -235,6 +277,56 @@ mod tests {
         assert_eq!(contents(&messages)[0], "essay");
         assert_eq!(messages.len(), 3);
         assert_eq!(history.len(), 1);
+    }
+
+    fn run(arguments: &str) -> ToolRun {
+        ToolRun {
+            call: ToolCall {
+                id: "toolu_1".to_owned(),
+                name: "media".to_owned(),
+                arguments: arguments.to_owned(),
+            },
+            result: "ok".to_owned(),
+        }
+    }
+
+    #[test]
+    fn the_tools_a_turn_used_are_sent_again() {
+        let mut history = History::new();
+        for _ in 0..2 {
+            history.push_user("pause");
+            history.push_reply("Paused.", vec![run("{}"), run("{}")]);
+        }
+        history.push_user("pause");
+        let messages = history.messages();
+        let roles: Vec<_> = messages.iter().map(|m| m.role).collect();
+        let turn = [
+            Role::User,
+            Role::Assistant,
+            Role::Tool,
+            Role::Tool,
+            Role::Assistant,
+        ];
+        assert_eq!(roles, [&turn[..], &turn[..], &[Role::User]].concat());
+        let called: Vec<_> = messages.iter().flat_map(|m| &m.calls).collect();
+        let answered: Vec<_> = messages.iter().filter(|m| m.role == Role::Tool).collect();
+        assert_eq!(called.len(), 4);
+        for (i, (call, result)) in called.iter().zip(answered).enumerate() {
+            assert_eq!(call.id, format!("call{:05}", i + 1));
+            assert_eq!(call.id, result.call_id);
+        }
+
+        let plain = without_calls(&messages);
+        let texts = ["pause", "Paused.", "pause", "Paused.", "pause"];
+        assert_eq!(contents(&plain), texts);
+    }
+
+    #[test]
+    fn a_very_long_call_is_not_kept() {
+        let mut history = History::new();
+        history.push_user("copy this");
+        history.push_reply("Copied.", vec![run(&"x".repeat(MAX_RUN))]);
+        assert_eq!(contents(&history.messages()), ["copy this", "Copied."]);
     }
 
     #[test]

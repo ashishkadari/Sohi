@@ -16,17 +16,19 @@ use sohi_audio::ring::{CaptureReader, CaptureWriter, capture_ring};
 use sohi_audio::vad::{Earshot, Segment, Segmenter, Utterance, rms};
 use sohi_audio::wav;
 use sohi_core::chat::Message;
+use sohi_core::config::SttConfig;
 use sohi_core::persona::{HEARD_NAME, correct_heard_name};
 use sohi_core::secret::KeyName;
 use sohi_providers::voxtral::TranscribeRequest;
 use sohi_providers::{HttpClient, Mistral, ProviderError, Voxtral, mistral};
 
-use crate::chat::{ListenTurn, ProviderRunner, Update, read_key};
+use crate::chat::{ListenTurn, ProviderRunner, Update};
+use crate::reply::read_key;
 use crate::runtime::UiLink;
-use crate::speak::answer_aloud;
+use crate::speak::{Aloud, answer_aloud};
 
 /// How often captured audio is processed (and the level sent).
-const TICK: Duration = Duration::from_millis(32);
+pub const TICK: Duration = Duration::from_millis(32);
 /// A warmed connection counts as warm this long (spec §3.3).
 const PREWARM_FRESH: Duration = Duration::from_secs(60);
 /// The prewarm request gets this long.
@@ -50,7 +52,7 @@ pub async fn run(runner: &mut ProviderRunner, listen: ListenTurn, ui: &UiLink<Up
     let audio = wav::encode(&utterance.samples);
     #[cfg(feature = "dev-record")]
     record(turn, &audio);
-    let text = match transcribe(&http, &listen, &audio).await {
+    let text = match transcribe(&http, &listen.stt, HEARD_NAME, &audio).await {
         Ok(text) => correct_heard_name(&text),
         Err(error) => {
             log::warn!("turn {turn}: transcription failed: {error}");
@@ -75,7 +77,15 @@ pub async fn run(runner: &mut ProviderRunner, listen: ListenTurn, ui: &UiLink<Up
     }
     let mut chat = listen.chat;
     chat.messages.push(Message::user(text));
-    answer_aloud(&http, &chat, &listen.tts, ended, ui).await;
+    let aloud = Aloud {
+        http: &http,
+        turn: &chat,
+        stt: &listen.stt,
+        tts: &listen.tts,
+        heard_at: ended,
+        toolbox: &runner.toolbox,
+    };
+    answer_aloud(aloud, ui).await;
 }
 
 /// Warms the connection (TCP + TLS) in the background, at most once a
@@ -106,7 +116,7 @@ fn prewarm(runner: &mut ProviderRunner, http: &HttpClient) {
 async fn listen_for_speech(turn: u64, ui: &UiLink<Update>) -> Option<Utterance> {
     let (writer, mut reader) = capture_ring();
     let opened = Instant::now();
-    let source = match Source::open(writer, opened) {
+    let source = match Source::open(writer, opened, "SOHI_DEV_INJECT") {
         Ok(source) => source,
         Err(err) => {
             log::warn!("turn {turn}: cannot open the mic: {err}");
@@ -140,7 +150,7 @@ async fn listen_for_speech(turn: u64, ui: &UiLink<Update>) -> Option<Utterance> 
 }
 
 /// Feeds everything captured so far to the segmenter.
-fn drain(
+pub fn drain(
     reader: &mut CaptureReader,
     segmenter: &mut Segmenter<Earshot>,
     buffer: &mut [i16],
@@ -201,16 +211,17 @@ fn record(turn: u64, audio: &[u8]) {
     }
 }
 
-async fn transcribe(
+pub async fn transcribe(
     http: &HttpClient,
-    listen: &ListenTurn,
+    stt: &SttConfig,
+    bias: &str,
     audio: &[u8],
 ) -> Result<String, ProviderError> {
     let key = read_key(KeyName::Mistral)?;
     let request = TranscribeRequest {
-        model: &listen.stt.model,
-        language: &listen.stt.language,
-        bias: HEARD_NAME,
+        model: &stt.model,
+        language: &stt.language,
+        bias,
         wav: audio,
     };
     let transcript = Voxtral::public(http.clone())
@@ -221,16 +232,21 @@ async fn transcribe(
 
 /// Where the audio comes from: the mic, or (with the `dev-inject` feature
 /// and `SOHI_DEV_INJECT` set to a WAV file) that file played in real time.
-enum Source {
+pub enum Source {
     Mic(sohi_win::Capture),
     #[cfg(feature = "dev-inject")]
     Inject(tokio::task::JoinHandle<()>),
 }
 
 impl Source {
-    fn open(writer: CaptureWriter, opened: Instant) -> Result<Self, String> {
+    /// Starts capturing. `inject` is the variable naming the WAV file.
+    pub fn open(
+        writer: CaptureWriter,
+        opened: Instant,
+        #[cfg_attr(not(feature = "dev-inject"), allow(unused_variables))] inject: &str,
+    ) -> Result<Self, String> {
         #[cfg(feature = "dev-inject")]
-        if let Some(path) = std::env::var_os("SOHI_DEV_INJECT") {
+        if let Some(path) = std::env::var_os(inject) {
             return inject::start(writer, &path).map(Self::Inject);
         }
         sohi_win::Capture::open(writer, opened)
@@ -238,7 +254,8 @@ impl Source {
             .map_err(|e| e.to_string())
     }
 
-    fn has_failed(&self) -> bool {
+    /// Whether the mic stopped by itself.
+    pub fn has_failed(&self) -> bool {
         match self {
             Self::Mic(capture) => capture.is_finished(),
             #[cfg(feature = "dev-inject")]
@@ -247,7 +264,7 @@ impl Source {
     }
 
     /// Stops capturing and logs how quickly the mic delivered audio.
-    fn close(self, turn: u64, opened: Instant) {
+    pub fn close(self, turn: u64, opened: Instant) {
         match self {
             Self::Mic(capture) => {
                 if let Some(first) = capture.first_packet_micros() {
@@ -370,8 +387,9 @@ mod tests {
                 model: LlmConfig::default().model,
                 fallback_model: String::new(),
                 offline: None,
-                system: system_prompt(Channel::Spoken, "", &sohi_win::local_time()),
+                system: system_prompt(Channel::Spoken, "", &sohi_win::local_time(), true),
                 messages: Vec::new(),
+                policy: sohi_tools::Policy::default(),
             };
             let listen = ListenTurn {
                 chat,

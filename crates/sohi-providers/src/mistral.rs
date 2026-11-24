@@ -8,12 +8,13 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use sohi_core::chat::Message;
+use serde_json::{Value, json};
+use sohi_core::chat::{Message, ToolCall, ToolSpec};
 use sohi_core::secret::Secret;
 
 use crate::http::{Auth, HttpClient};
 use crate::sse::SseParser;
-use crate::{ChatRequest, ProviderError};
+use crate::{ChatRequest, Completion, ProviderError};
 
 /// The public API.
 pub const BASE_URL: &str = "https://api.mistral.ai";
@@ -54,7 +55,7 @@ impl Mistral {
         key: &Secret,
         request: &ChatRequest<'_>,
         on_delta: &mut dyn FnMut(&str),
-    ) -> Result<(), ProviderError> {
+    ) -> Result<Completion, ProviderError> {
         let body = request_body(request)?;
         let url = format!("{}/v1/chat/completions", self.base_url);
         let headers = [("accept", "text/event-stream")];
@@ -64,16 +65,17 @@ impl Mistral {
             .await?;
         let mut parser = SseParser::new();
         let mut finished = false;
+        let mut calls = Vec::new();
         while let Some(chunk) = response.next_chunk(BETWEEN_CHUNKS).await? {
             for event in parser.push(chunk.as_ref()) {
                 if event.data == "[DONE]" {
-                    return Ok(());
+                    return Ok(completion(calls));
                 }
-                finished |= take_chunk(&event.data, on_delta)?;
+                finished |= take_chunk(&event.data, &mut calls, on_delta)?;
             }
         }
         if finished {
-            Ok(())
+            Ok(completion(calls))
         } else {
             Err(ProviderError::Offline("the reply ended early".to_owned()))
         }
@@ -122,30 +124,71 @@ struct Body<'a> {
     model: &'a str,
     messages: Vec<WireMessage<'a>>,
     stream: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<Value>,
 }
 
 #[derive(Serialize)]
 struct WireMessage<'a> {
     role: &'a str,
     content: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tool_calls: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<&'a str>,
+}
+
+impl<'a> WireMessage<'a> {
+    fn new(message: &'a Message) -> Self {
+        let call = |c: &ToolCall| {
+            json!({
+                "id": c.id,
+                "type": "function",
+                "function": { "name": c.name, "arguments": c.arguments },
+            })
+        };
+        Self {
+            role: message.role.as_str(),
+            content: &message.content,
+            tool_calls: message.calls.iter().map(call).collect(),
+            tool_call_id: (!message.call_id.is_empty()).then_some(&message.call_id),
+        }
+    }
+}
+
+fn wire_tool(spec: &ToolSpec) -> Result<Value, ProviderError> {
+    let parameters: Value = serde_json::from_str(spec.parameters)
+        .map_err(|e| ProviderError::BadResponse(format!("tool schema: {e}")))?;
+    Ok(json!({
+        "type": "function",
+        "function": {
+            "name": spec.name,
+            "description": spec.description,
+            "parameters": parameters,
+        },
+    }))
 }
 
 fn request_body(request: &ChatRequest<'_>) -> Result<Vec<u8>, ProviderError> {
     let system = (!request.system.is_empty()).then_some(WireMessage {
         role: "system",
         content: request.system,
+        tool_calls: Vec::new(),
+        tool_call_id: None,
     });
     let messages = system
         .into_iter()
-        .chain(request.messages.iter().map(|m: &Message| WireMessage {
-            role: m.role.as_str(),
-            content: &m.content,
-        }))
+        .chain(request.messages.iter().map(WireMessage::new))
         .collect();
     let body = Body {
         model: request.model,
         messages,
         stream: true,
+        tools: request
+            .tools
+            .iter()
+            .map(wire_tool)
+            .collect::<Result<_, _>>()?,
     };
     serde_json::to_vec(&body).map_err(|e| ProviderError::BadResponse(e.to_string()))
 }
@@ -166,6 +209,68 @@ struct Choice {
 #[derive(Default, Deserialize)]
 struct Delta {
     content: Option<Content>,
+    tool_calls: Option<Vec<CallDelta>>,
+}
+
+/// A tool call, or more of one: pieces of the same index belong together.
+/// (Seen live: each call arrives whole, with the finish reason.)
+#[derive(Deserialize)]
+struct CallDelta {
+    #[serde(default)]
+    index: u64,
+    id: Option<String>,
+    function: Option<FunctionDelta>,
+}
+
+#[derive(Deserialize)]
+struct FunctionDelta {
+    name: Option<String>,
+    arguments: Option<Arguments>,
+}
+
+/// Arguments are JSON in a string, or (some models) the object itself.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Arguments {
+    Text(String),
+    Object(Value),
+}
+
+/// The calls so far, by index.
+type Calls = Vec<(u64, ToolCall)>;
+
+fn take_call(delta: CallDelta, calls: &mut Calls) {
+    if !calls.iter().any(|(index, _)| *index == delta.index) {
+        let call = ToolCall {
+            id: String::new(),
+            name: String::new(),
+            arguments: String::new(),
+        };
+        calls.push((delta.index, call));
+    }
+    let Some((_, call)) = calls.iter_mut().find(|(i, _)| *i == delta.index) else {
+        return;
+    };
+    // Later pieces may repeat the id as "null".
+    if let Some(id) = delta.id.filter(|id| call.id.is_empty() && id != "null") {
+        call.id = id;
+    }
+    let Some(function) = delta.function else {
+        return;
+    };
+    call.name.push_str(&function.name.unwrap_or_default());
+    match function.arguments {
+        Some(Arguments::Text(text)) => call.arguments.push_str(&text),
+        Some(Arguments::Object(value)) => call.arguments.push_str(&value.to_string()),
+        None => {}
+    }
+}
+
+fn completion(calls: Calls) -> Completion {
+    Completion {
+        calls: calls.into_iter().map(|(_, call)| call).collect(),
+        blocks: None,
+    }
 }
 
 /// Plain text, or (for some models) a list of typed parts.
@@ -183,9 +288,13 @@ struct Part {
     text: Option<String>,
 }
 
-/// Hands the text in one event to `on_delta`. Returns whether the event
-/// said the reply is finished.
-fn take_chunk(data: &str, on_delta: &mut dyn FnMut(&str)) -> Result<bool, ProviderError> {
+/// Hands the text in one event to `on_delta`, and collects tool calls.
+/// Returns whether the event said the reply is finished.
+fn take_chunk(
+    data: &str,
+    calls: &mut Calls,
+    on_delta: &mut dyn FnMut(&str),
+) -> Result<bool, ProviderError> {
     let chunk: Chunk = serde_json::from_str(data)
         .map_err(|e| ProviderError::BadResponse(format!("bad stream chunk: {e}")))?;
     let mut finished = false;
@@ -203,6 +312,9 @@ fn take_chunk(data: &str, on_delta: &mut dyn FnMut(&str)) -> Result<bool, Provid
                 }
             }
             _ => {}
+        }
+        for call in choice.delta.tool_calls.into_iter().flatten() {
+            take_call(call, calls);
         }
         finished |= choice.finish_reason.is_some();
     }
@@ -236,12 +348,16 @@ mod tests {
             model: "mistral-small-latest",
             system: "Be brief.",
             messages: &history,
+            tools: &[],
         };
         let mut deltas = Vec::new();
         let result = mistral
             .chat_stream(&key, &request, &mut |d| deltas.push(d.to_owned()))
             .await
-            .map(|()| deltas);
+            .map(|done| {
+                assert_eq!(done, Completion::default());
+                deltas
+            });
         (result, server.request().await)
     }
 
@@ -272,6 +388,60 @@ mod tests {
             .collect();
         assert_eq!(roles, ["system", "user", "assistant", "user"]);
         assert_eq!(json["messages"][0]["content"], "Be brief.");
+    }
+
+    #[tokio::test]
+    async fn tool_calls_are_sent_and_collected() {
+        const SPEC: ToolSpec = ToolSpec {
+            name: "volume",
+            description: "Change it.",
+            parameters: r#"{"type":"object","properties":{}}"#,
+        };
+        // The first event as seen live; then one call in two pieces.
+        let server = serve_once(Reply::chunked(
+            200,
+            &[
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":\"EWstAJLSO\",\"type\":\"function\",\"function\":{\"name\":\"launch_app\",\"arguments\":\"{\\\"name\\\": \\\"notepad\\\"}\"},\"index\":0}]},\"finish_reason\":null}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"Ak3n2CSkX\",\"function\":{\"name\":\"volume\",\"arguments\":\"{\\\"a\\\"\"},\"index\":1}]},\"finish_reason\":null}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"null\",\"function\":{\"arguments\":\":1}\"},\"index\":1}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+            ],
+        ))
+        .await;
+        let mistral = Mistral::new(HttpClient::new().unwrap(), server.url(""));
+        let key = Secret::from_input("sk-mistral").unwrap();
+        let call = |id: &str, name: &str, arguments: &str| ToolCall {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            arguments: arguments.to_owned(),
+        };
+        let history = [
+            Message::user("Louder"),
+            Message::calls("", vec![call("abc123XYZ", "volume", "{}")], None),
+            Message::tool_result("abc123XYZ", "{\"ok\":true}"),
+        ];
+        let request = ChatRequest {
+            model: "m",
+            system: "",
+            messages: &history,
+            tools: &[SPEC],
+        };
+        let done = mistral.chat_stream(&key, &request, &mut |_| {}).await;
+        let want = vec![
+            call("EWstAJLSO", "launch_app", "{\"name\": \"notepad\"}"),
+            call("Ak3n2CSkX", "volume", "{\"a\":1}"),
+        ];
+        assert_eq!(done.unwrap().calls, want);
+        let raw = server.request().await;
+        let body = &raw[raw.find("\r\n\r\n").unwrap() + 4..];
+        let json: Value = serde_json::from_str(body).unwrap();
+        assert_eq!(json["tools"][0]["function"]["name"], "volume");
+        assert_eq!(json["tools"][0]["function"]["parameters"]["type"], "object");
+        let sent = &json["messages"][1]["tool_calls"][0];
+        assert_eq!(sent["id"], "abc123XYZ");
+        assert_eq!(sent["function"]["arguments"], "{}");
+        assert_eq!(json["messages"][2]["role"], "tool");
+        assert_eq!(json["messages"][2]["tool_call_id"], "abc123XYZ");
+        assert!(json["messages"][0].get("tool_calls").is_none());
     }
 
     #[tokio::test]
@@ -322,7 +492,7 @@ mod tests {
     fn content_parts_keep_only_text() {
         let data = r#"{"choices":[{"delta":{"content":[{"type":"thinking","thinking":[]},{"type":"text","text":"Hi"}]},"finish_reason":null}]}"#;
         let mut got = Vec::new();
-        assert!(!take_chunk(data, &mut |d| got.push(d.to_owned())).unwrap());
+        assert!(!take_chunk(data, &mut Vec::new(), &mut |d| got.push(d.to_owned())).unwrap());
         assert_eq!(got, ["Hi"]);
     }
 }

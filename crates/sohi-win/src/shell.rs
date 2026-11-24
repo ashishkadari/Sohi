@@ -7,7 +7,7 @@ use windows::Win32::UI::Shell::{
     QUERY_USER_NOTIFICATION_STATE, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
     SHQueryUserNotificationState, ShellExecuteW,
 };
-use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow, SW_SHOWNORMAL};
 use windows::core::{HSTRING, w};
 
 use crate::WinError;
@@ -47,6 +47,13 @@ pub fn open_with(program: &str, path: &Path) -> Result<(), OpenError> {
     // SAFETY: valid wide strings that outlive the call.
     let result = unsafe { ShellExecuteW(None, w!("open"), &program, &args, None, SW_SHOWNORMAL) };
     check(result.0 as isize)
+}
+
+/// Lets whatever is started next come to the front, if Sohi has the
+/// foreground now.
+pub fn allow_foreground() {
+    // SAFETY: no preconditions. Refused if Sohi has no such right.
+    let _ = unsafe { AllowSetForegroundWindow(ASFW_ANY) };
 }
 
 fn check(code: isize) -> Result<(), OpenError> {
