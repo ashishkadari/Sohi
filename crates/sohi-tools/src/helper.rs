@@ -12,6 +12,7 @@ use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{MediaCommand, MediaResult};
 
 /// Argument: open the target that follows.
@@ -33,7 +34,24 @@ const POLL: Duration = Duration::from_millis(5);
 /// In the helper: opens `target`. Returns whether that worked.
 #[must_use]
 pub fn run_open(target: &str) -> bool {
-    sohi_win::shell::open_path(Path::new(target)).is_ok()
+    let path = Path::new(target);
+    match open_path(path) {
+        // `.toml` has no editor on a fresh Windows.
+        Err(OpenError::NoAssociation) if path.extension().is_some_and(|e| e == "toml") => {
+            open_with("notepad.exe", path).is_ok()
+        }
+        result => result.is_ok(),
+    }
+}
+
+/// Opens one of Sohi's own files or folders with a helper, without waiting
+/// for it.
+///
+/// # Errors
+/// Returns why the helper could not be started.
+pub fn open_soon(path: &Path) -> std::io::Result<()> {
+    sohi_win::shell::allow_foreground();
+    command()?.arg(OPEN).arg(path).spawn().map(drop)
 }
 
 /// In the helper: prints the apps folder. Returns whether that worked.

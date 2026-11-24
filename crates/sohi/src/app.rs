@@ -10,9 +10,8 @@ use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::interaction::Event as TextEvent;
 use sohi_core::visibility::Input;
 use sohi_core::wake::CornerSettings;
-use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{
-    AppWindow, EventQueue, FrameTimer, HotkeyHost, NetworkWatch, Presence, PresenceWatch,
+    AppTimer, AppWindow, EventQueue, FrameTimer, HotkeyHost, NetworkWatch, Presence, PresenceWatch,
     RemoteWindow, TimerHost, TrayIcon, WinError, WinEvent,
 };
 
@@ -57,10 +56,24 @@ pub struct Options {
     pub tools: ToolsConfig,
 }
 
+/// Name of the startup entry, as Settings shows it.
+const AUTOSTART_NAME: &str = "Sohi";
+/// Timer id, next to those of [`crate::text_mode`].
+const TIMER_TRAY: usize = 4;
+/// How long the taskbar gets before the tray icon is tried again.
+const TRAY_RETRY: Duration = Duration::from_secs(3);
+/// How often. Later, `TaskbarCreated` says when it is ready.
+const MAX_TRAY_TRIES: u32 = 10;
+
 /// Everything the UI thread owns.
 pub struct App {
     head: Head,
     tray: TrayIcon,
+    /// When the tray icon is tried again.
+    tray_retry: Option<AppTimer>,
+    /// How often that was done.
+    tray_tries: u32,
+    timers: TimerHost,
     /// For quitting: closing the app window ends the message loop.
     main_window: RemoteWindow,
     paths: Paths,
@@ -101,7 +114,7 @@ impl App {
         if !sohi_win::force_dark_menus() {
             log::warn!("dark menus unavailable; using the system theme");
         }
-        let tray = TrayIcon::add(window, dpi, sohi_render::tray_icon)?;
+        let tray = TrayIcon::new(window, dpi, sohi_render::tray_icon)?;
         let hotkeys = Hotkeys::register(window, &tray, &options.wake);
         let corner = CornerSettings::from_config(&options.wake);
         let presence = PresenceWatch::register(window)
@@ -132,6 +145,9 @@ impl App {
         let mut app = Self {
             head,
             tray,
+            tray_retry: None,
+            tray_tries: 0,
+            timers: TimerHost::new(window),
             main_window: window.remote(),
             paths,
             menu_state: MenuState {
@@ -147,6 +163,7 @@ impl App {
             _network: network,
             text,
         };
+        app.show_tray();
         app.relayout();
         app.text.show_base(&mut app.head);
         Ok(app)
@@ -195,15 +212,18 @@ impl App {
             WinEvent::TrayActivated => log::info!("tray icon activated"),
             WinEvent::TaskbarCreated => {
                 log::info!("taskbar restarted; re-adding tray icon");
-                if let Err(err) = self.tray.readd() {
-                    log::warn!("cannot re-add tray icon: {err}");
-                }
+                self.tray_tries = 0;
+                self.show_tray();
             }
             WinEvent::Runtime => self.text.on_runtime(&mut self.head),
             WinEvent::PillSubmit
             | WinEvent::PillEscape
             | WinEvent::PillRecall
             | WinEvent::PillFocus(_) => self.text.on_pill(event, &mut self.head),
+            WinEvent::Timer { id: TIMER_TRAY } => {
+                self.tray_retry = None;
+                self.show_tray();
+            }
             WinEvent::Timer { id } => {
                 if !self.text.on_timer(id, &mut self.head) {
                     log::debug!("unknown timer {id}");
@@ -231,6 +251,23 @@ impl App {
         self.head.input(Input::Reveal {
             retract_after: Some(hold),
         });
+    }
+
+    /// Shows the tray icon. While the taskbar is busy (right after signing
+    /// in) that can fail, so it is tried a few more times.
+    fn show_tray(&mut self) {
+        let Err(err) = self.tray.show() else {
+            return;
+        };
+        log::warn!("cannot add the tray icon: {err}");
+        if self.tray_tries < MAX_TRAY_TRIES {
+            self.tray_tries += 1;
+            self.tray_retry = self
+                .timers
+                .start(TIMER_TRAY, TRAY_RETRY)
+                .inspect_err(|err| log::warn!("cannot start a timer: {err}"))
+                .ok();
+        }
     }
 
     /// A voice wake: reveal the head and listen (spec §3.3), or open the
@@ -282,6 +319,9 @@ impl App {
     }
 
     fn show_menu(&mut self, x: i32, y: i32) {
+        // It can be changed in Settings as well.
+        self.menu_state.start_with_windows = std::env::current_exe()
+            .is_ok_and(|exe| sohi_win::starts_with_windows(AUTOSTART_NAME, &exe));
         let items = tray_menu::items(self.menu_state);
         let chosen = self.tray.show_menu(&items, x, y);
         let Some(command) = chosen.and_then(MenuCommand::from_id) else {
@@ -289,12 +329,8 @@ impl App {
         };
         log::info!("menu: {command:?}");
         match command {
-            MenuCommand::OpenConfig => open_config(&self.paths.config),
-            MenuCommand::OpenLogFolder => {
-                if let Err(err) = open_path(&self.paths.logs) {
-                    log::warn!("cannot open log folder: {err:?}");
-                }
-            }
+            MenuCommand::OpenConfig => open(&self.paths.config),
+            MenuCommand::OpenLogFolder => open(&self.paths.logs),
             MenuCommand::Quit => {
                 if let Err(err) = self.main_window.post_close() {
                     log::error!("cannot quit cleanly: {err}");
@@ -305,7 +341,7 @@ impl App {
             MenuCommand::Talk => self.wake(true),
             MenuCommand::ForceOffline => self.toggle_offline(),
             MenuCommand::StartWithWindows => {
-                log::info!("{command:?} is not available yet");
+                toggle_autostart(self.menu_state.start_with_windows);
             }
         }
     }
@@ -338,14 +374,23 @@ impl App {
     }
 }
 
-/// Opens the config in its associated editor, or Notepad if `.toml` has
-/// no association (common on a fresh Windows install).
-fn open_config(path: &Path) {
-    let result = match open_path(path) {
-        Err(OpenError::NoAssociation) => open_with("notepad.exe", path),
-        other => other,
-    };
-    if let Err(err) = result {
-        log::warn!("cannot open config: {err:?}");
+/// Has Windows start Sohi at sign-in, or no longer.
+fn toggle_autostart(on_now: bool) {
+    let result = std::env::current_exe()
+        .map_err(|err| err.to_string())
+        .and_then(|exe| {
+            sohi_win::set_starts_with_windows(AUTOSTART_NAME, &exe, !on_now)
+                .map_err(|err| err.to_string())
+        });
+    match result {
+        Ok(()) => log::info!("start with Windows: {}", !on_now),
+        Err(err) => log::warn!("cannot change start with Windows: {err}"),
+    }
+}
+
+/// Opens the config or the log folder.
+fn open(path: &Path) {
+    if let Err(err) = sohi_tools::helper::open_soon(path) {
+        log::warn!("cannot open {}: {err}", path.display());
     }
 }

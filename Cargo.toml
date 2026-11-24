@@ -4,7 +4,7 @@ members = ["crates/*", "xtask"]
 default-members = ["crates/*"]
 
 [workspace.package]
-version = "0.0.0"
+version = "1.0.0"
 edition = "2024"
 publish = false
 
@@ -80,9 +80,19 @@ undocumented_unsafe_blocks = "warn"
 
 # Spec §2.4. Binary size is tracked per phase with `cargo xtask bloat`.
 [profile.release]
-opt-level = 3
+opt-level = "s"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
 debug = false
+
+# What runs for every frame or every audio block stays fast.
+[profile.release.package.sohi-render]
+opt-level = 3
+
+[profile.release.package.sohi-audio]
+opt-level = 3
+
+[profile.release.package.earshot]
+opt-level = 3

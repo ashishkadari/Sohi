@@ -107,6 +107,16 @@ impl Args {
     }
 }
 
+/// `name`, or (with the `dev-inject` feature and `SOHI_DEV_INSTANCE` set)
+/// one of its own, so a test build runs beside the Sohi in daily use.
+fn instance_name(name: &str) -> String {
+    #[cfg(feature = "dev-inject")]
+    if let Ok(instance) = std::env::var("SOHI_DEV_INSTANCE") {
+        return format!("{name}.{instance}");
+    }
+    name.to_owned()
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
@@ -127,11 +137,12 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         // so it also works while Sohi is running.
         return Ok(set_key::run(name));
     }
+    let window_class = instance_name(APP_WINDOW_CLASS);
     let wake_message = sohi_win::register_window_message(WAKE_MESSAGE)?;
-    let Some(_instance) = SingleInstance::acquire(INSTANCE_MUTEX)? else {
+    let Some(_instance) = SingleInstance::acquire(&instance_name(INSTANCE_MUTEX))? else {
         // Another instance owns the mutex: ask it to wake and leave at once.
         // The second process never opens the log, so rotation has one owner.
-        sohi_win::forward_to_running_instance(APP_WINDOW_CLASS, wake_message)?;
+        sohi_win::forward_to_running_instance(&window_class, wake_message)?;
         return Ok(ExitCode::SUCCESS);
     };
 
@@ -149,7 +160,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     assert!(!args.test_panic, "--test-panic requested");
 
     let queue = EventQueue::new();
-    let window = AppWindow::create(APP_WINDOW_CLASS, wake_message, queue.clone())?;
+    let window = AppWindow::create(&window_class, wake_message, queue.clone())?;
     let timer = Rc::new(FrameTimer::new()?);
     let paths = app::Paths {
         config: config_file::default_path(),

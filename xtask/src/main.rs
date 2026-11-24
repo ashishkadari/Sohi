@@ -6,6 +6,9 @@
 //! - `perf [--idle-secs N] [--report PATH]`: release build, run
 //!   `sohi.exe --perf`, check the spec §6 budgets, optionally write a report.
 //! - `bloat`: per-crate size breakdown of the release binary (`cargo bloat`).
+//! - `release`: the portable zip, under `target/dist`.
+//! - `soak --wav FILE... [--turns N] [--hours H] [--report PATH]`: voice turns
+//!   with injected speech, then hours of being parked (spec §8 P8).
 //! - `snap [--out DIR]`: render every visual state at 100/150/200 % to PNGs.
 
 #![forbid(unsafe_code)]
@@ -13,14 +16,15 @@
 mod check;
 mod perf;
 mod png;
+mod release;
 mod secrets;
 mod snap;
+mod soak;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const USAGE: &str =
-    "usage: cargo xtask <check | perf [--idle-secs N] [--report PATH] | bloat | snap [--out DIR]>";
+const USAGE: &str = "usage: cargo xtask <check | perf [--idle-secs N] [--report PATH] | bloat | release | soak --wav FILE... [--turns N] [--hours H] [--report PATH] | snap [--out DIR]>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -28,6 +32,8 @@ fn main() -> ExitCode {
         Some("check") => check::run(),
         Some("perf") => perf::run(&args[1..]),
         Some("bloat") => bloat(),
+        Some("release") => release::run(&args[1..]),
+        Some("soak") => soak::run(&args[1..]),
         Some("snap") => snap::run(&args[1..]),
         _ => Err(USAGE.to_owned()),
     };

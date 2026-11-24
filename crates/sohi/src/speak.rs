@@ -32,6 +32,10 @@ use crate::yes_no::VoiceEar;
 
 /// How often speech is fed to the render thread and its state checked.
 const TICK: Duration = Duration::from_millis(16);
+/// How often a device that was lost while it played is replaced in a turn.
+const MAX_REOPENS: u32 = 4;
+/// Windows needs a moment to choose another device.
+const REOPEN_AFTER: Duration = Duration::from_millis(400);
 /// Synthesis pauses while this much speech is waiting to be played.
 const AHEAD: Duration = Duration::from_secs(15);
 
@@ -342,6 +346,10 @@ struct Speaker<'a> {
     output: Option<Output>,
     /// Whether speech was heard in this turn.
     speaking: bool,
+    /// How often a lost device was replaced in this turn.
+    reopened: u32,
+    /// When the next device may be opened.
+    open_at: Option<Instant>,
 }
 
 /// An open output device.
@@ -362,6 +370,8 @@ impl<'a> Speaker<'a> {
             ui,
             output: None,
             speaking: false,
+            reopened: 0,
+            open_at: None,
         }
     }
 
@@ -438,6 +448,9 @@ impl<'a> Speaker<'a> {
     fn feed(&mut self) -> bool {
         let next_rate = self.speech.queue.borrow().front().map(|p| p.rate);
         let Some(output) = &mut self.output else {
+            if self.open_at.is_some_and(|at| Instant::now() < at) {
+                return false;
+            }
             return match next_rate {
                 Some(rate) => {
                     self.open(rate);
@@ -461,32 +474,31 @@ impl<'a> Speaker<'a> {
                     fill(writer, &mut self.speech.queue.borrow_mut());
                     false
                 }
-                _ => {
-                    self.device_failed();
-                    true
-                }
+                _ => self.device_failed(),
             },
             None if self.speech.complete.get() => {
                 output.writer = None;
                 output.playback.is_finished()
             }
-            None => {
-                let failed = output.playback.is_finished();
-                if failed {
-                    self.device_failed();
-                }
-                failed
-            }
+            None => output.playback.is_finished() && self.device_failed(),
         }
     }
 
-    /// Logs why the device stopped early.
-    fn device_failed(&mut self) {
+    /// The device stopped early. If it had played before it was probably
+    /// unplugged: the rest goes to whatever is the default by then, and
+    /// `false` is returned. Otherwise it is given up.
+    fn device_failed(&mut self) -> bool {
         let why = match self.output.take().map(|o| o.playback.finish()) {
             Some(Err(err)) => err.to_string(),
             _ => "it stopped".to_owned(),
         };
         log::warn!("turn {}: the speech output failed: {why}", self.turn);
+        if !self.speaking || self.reopened == MAX_REOPENS {
+            return true;
+        }
+        self.reopened += 1;
+        self.open_at = Some(Instant::now() + REOPEN_AFTER);
+        false
     }
 }
 
@@ -553,6 +565,38 @@ mod tests {
         assert!(!speech.is_quiet());
         speech.pending.set(false);
         assert!(speech.is_quiet());
+    }
+
+    /// A device that stops while it plays is replaced, and the rest is
+    /// heard there (audible: a quiet hum).
+    #[tokio::test]
+    #[ignore = "plays on the real output device"]
+    async fn a_lost_device_is_replaced() {
+        let window = AppWindow::create("Sohi.Test.Lost", 0xC142, EventQueue::new()).unwrap();
+        let (ui, _updates) = crate::runtime::test_link(window.remote());
+        let speech = Speech::default();
+        // Longer than the ring holds, so some is left to be played.
+        speech
+            .queue
+            .borrow_mut()
+            .push_back(piece(24_000, 24_000 * 4));
+        speech.complete.set(true);
+        let mut speaker = Speaker::new(1, Instant::now(), &speech, &ui);
+        let mut lost = false;
+        for _ in 0..1_000 {
+            tokio::time::sleep(TICK).await;
+            speaker.report();
+            if speaker.speaking && !lost {
+                lost = true;
+                speaker.output.as_ref().unwrap().playback.stop();
+            }
+            if speaker.feed() {
+                break;
+            }
+        }
+        assert!(lost);
+        assert_eq!(speaker.reopened, 1);
+        assert!(speech.queue.borrow().is_empty());
     }
 
     /// Offline speech end to end: synthesized by Windows, played on the

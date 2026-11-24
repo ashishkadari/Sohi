@@ -29,6 +29,10 @@ use crate::speak::{Aloud, answer_aloud};
 
 /// How often captured audio is processed (and the level sent).
 pub const TICK: Duration = Duration::from_millis(32);
+/// How often a mic that was lost while listening is replaced.
+const MAX_REOPENS: u32 = 2;
+/// Windows needs a moment to choose another device.
+const REOPEN_AFTER: Duration = Duration::from_millis(400);
 /// A warmed connection counts as warm this long (spec §3.3).
 const PREWARM_FRESH: Duration = Duration::from_secs(60);
 /// The prewarm request gets this long.
@@ -111,19 +115,25 @@ fn prewarm(runner: &mut ProviderRunner, http: &HttpClient) {
     });
 }
 
-/// Opens the mic and waits for an utterance. Returns `None` (having told
-/// the UI why) if nobody spoke or the mic failed.
-async fn listen_for_speech(turn: u64, ui: &UiLink<Update>) -> Option<Utterance> {
-    let (writer, mut reader) = capture_ring();
+/// Opens the mic. Returns `None` (having told the UI) if that fails.
+fn open_mic(turn: u64, ui: &UiLink<Update>) -> Option<(Source, CaptureReader, Instant)> {
+    let (writer, reader) = capture_ring();
     let opened = Instant::now();
-    let source = match Source::open(writer, opened, "SOHI_DEV_INJECT") {
-        Ok(source) => source,
+    match Source::open(writer, opened, "SOHI_DEV_INJECT") {
+        Ok(source) => Some((source, reader, opened)),
         Err(err) => {
             log::warn!("turn {turn}: cannot open the mic: {err}");
             ui.send(Update::MicFailed { turn });
-            return None;
+            None
         }
-    };
+    }
+}
+
+/// Opens the mic and waits for an utterance. Returns `None` (having told
+/// the UI why) if nobody spoke or the mic failed.
+async fn listen_for_speech(turn: u64, ui: &UiLink<Update>) -> Option<Utterance> {
+    let (mut source, mut reader, mut opened) = open_mic(turn, ui)?;
+    let mut reopened = 0;
     let mut segmenter = Segmenter::new(Earshot::new());
     let mut samples = vec![0i16; sohi_audio::ring::RING_SAMPLES];
     let mut tick = tokio::time::interval(TICK);
@@ -142,9 +152,18 @@ async fn listen_for_speech(turn: u64, ui: &UiLink<Update>) -> Option<Utterance> 
             }
         }
         if source.has_failed() {
+            let worked = source.has_delivered();
+            source.close(turn, opened);
             log::warn!("turn {turn}: the mic stopped delivering audio");
-            ui.send(Update::MicFailed { turn });
-            return None;
+            // Probably unplugged: go on with whatever is the default now.
+            // What was said so far is kept.
+            reopened += 1;
+            if !worked || reopened > MAX_REOPENS {
+                ui.send(Update::MicFailed { turn });
+                return None;
+            }
+            tokio::time::sleep(REOPEN_AFTER).await;
+            (source, reader, opened) = open_mic(turn, ui)?;
         }
     }
 }
@@ -260,6 +279,15 @@ impl Source {
             Self::Mic(capture) => capture.is_finished(),
             #[cfg(feature = "dev-inject")]
             Self::Inject(_) => false,
+        }
+    }
+
+    /// Whether the mic delivered any audio.
+    pub fn has_delivered(&self) -> bool {
+        match self {
+            Self::Mic(capture) => capture.first_packet_micros().is_some(),
+            #[cfg(feature = "dev-inject")]
+            Self::Inject(_) => true,
         }
     }
 

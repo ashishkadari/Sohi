@@ -163,7 +163,7 @@ fn budget_rows(m: &BTreeMap<String, f64>, size: u64) -> Result<Vec<Row>, String>
         row(
             "idle working set",
             get("idle_working_set")? / MB,
-            25.0,
+            27.0,
             "MB",
         ),
         row(

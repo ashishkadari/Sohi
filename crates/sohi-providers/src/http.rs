@@ -95,10 +95,16 @@ impl HttpClient {
             Auth::Bearer(key) => request.bearer_auth(key.expose()),
             Auth::Header(name, key) => request.header(name, sensitive(key)?),
         };
-        let response = tokio::time::timeout(first_byte, request.send())
-            .await
-            .map_err(|_| ProviderError::Offline("no response in time".to_owned()))?
-            .map_err(|e| ProviderError::from_transport(&e))?;
+        let again = request.try_clone();
+        let mut sent = send(request, first_byte).await?;
+        // A pooled connection can be closed by the server just as it is
+        // used. Nothing came back, so the request is sent once more.
+        if let Some(again) = again
+            && sent.as_ref().is_err_and(was_dropped)
+        {
+            sent = send(again, first_byte).await?;
+        }
+        let response = sent.map_err(|e| ProviderError::from_transport(&e))?;
         Response::check(response).await
     }
 
@@ -125,6 +131,22 @@ impl HttpClient {
             .map_err(|e| ProviderError::from_transport(&e))?;
         Response::check(response).await
     }
+}
+
+/// Sends `request` and waits for the response headers, at most `limit`
+/// long.
+async fn send(
+    request: reqwest::RequestBuilder,
+    limit: Duration,
+) -> Result<reqwest::Result<reqwest::Response>, ProviderError> {
+    tokio::time::timeout(limit, request.send())
+        .await
+        .map_err(|_| ProviderError::Offline("no response in time".to_owned()))
+}
+
+/// Whether a connection that stood broke before anything came back.
+fn was_dropped(error: &reqwest::Error) -> bool {
+    error.is_request() && !error.is_connect() && !error.is_timeout()
 }
 
 /// A header value holding a key, marked sensitive so it is never shown in
@@ -187,6 +209,41 @@ impl Response {
 mod tests {
     use super::*;
     use crate::testserver::{Reply, serve_once};
+
+    /// Drops the first `drops` connections once a request arrives, then
+    /// answers. Returns its address.
+    async fn flaky(drops: usize) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            for n in 0..=drops {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let _ = socket.read(&mut [0; 1024]).await;
+                if n >= drops {
+                    let ok = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+                    let _ = socket.write_all(ok).await;
+                }
+            }
+        });
+        url
+    }
+
+    async fn post(url: &str) -> Result<Response, ProviderError> {
+        let wait = Duration::from_secs(5);
+        HttpClient::new()
+            .unwrap()
+            .post_json(url, Auth::None, &[], b"{}".to_vec(), wait)
+            .await
+    }
+
+    #[tokio::test]
+    async fn a_dropped_connection_is_tried_once_more() {
+        let response = post(&flaky(1).await).await.unwrap();
+        assert_eq!(response.bytes().await.unwrap(), b"ok");
+        let error = post(&flaky(2).await).await.unwrap_err();
+        assert!(matches!(error, ProviderError::Offline(_)));
+    }
 
     const SECOND: Duration = Duration::from_secs(1);
 
