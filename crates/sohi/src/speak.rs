@@ -24,7 +24,9 @@ use sohi_providers::{
 use sohi_win::Playback;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
-use crate::chat::{ChatTurn, Update, chat, read_key};
+use crate::actions::{Actions, NoEar, Toolbox};
+use crate::chat::{ChatTurn, Update};
+use crate::reply::{chat, read_key};
 use crate::runtime::UiLink;
 
 /// How often speech is fed to the render thread and its state checked.
@@ -39,6 +41,7 @@ pub async fn answer_aloud(
     turn: &ChatTurn,
     tts: &TtsConfig,
     heard_at: Instant,
+    toolbox: &Toolbox,
     ui: &UiLink<Update>,
 ) {
     let id = turn.turn;
@@ -54,7 +57,8 @@ pub async fn answer_aloud(
                 let _ = sentences_tx.send(sentence);
             }
         };
-        let reply = chat(http, turn, &on_text).await?;
+        let mut actions = Actions::new(id, &turn.policy, toolbox, ui, NoEar);
+        let reply = chat(http, turn, &mut actions, &on_text).await?;
         for sentence in chunker.borrow_mut().flush() {
             let _ = sentences_tx.send(sentence);
         }

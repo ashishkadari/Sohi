@@ -782,6 +782,7 @@ dependencies = [
  "sohi-core",
  "sohi-providers",
  "sohi-render",
+ "sohi-tools",
  "sohi-win",
  "tokio",
 ]

@@ -11,6 +11,7 @@ sohi-audio.workspace = true
 sohi-core.workspace = true
 sohi-providers.workspace = true
 sohi-render.workspace = true
+sohi-tools.workspace = true
 sohi-win.workspace = true
 tokio.workspace = true
 

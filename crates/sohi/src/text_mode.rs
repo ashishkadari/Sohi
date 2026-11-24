@@ -9,7 +9,7 @@ mod net;
 
 use std::time::{Duration, Instant};
 
-use sohi_core::config::{SttConfig, TtsConfig};
+use sohi_core::config::{SttConfig, ToolsConfig, TtsConfig};
 use sohi_core::connectivity::{Connectivity, Event as NetEvent};
 use sohi_core::geometry::{BASE_DPI, RectPx};
 use sohi_core::history::History;
@@ -18,6 +18,7 @@ use sohi_core::persona::{Channel, system_prompt};
 use sohi_core::pill::pill_origin;
 use sohi_core::visibility::{Input, Phase};
 use sohi_core::visual::VisualState;
+use sohi_tools::Policy;
 use sohi_win::{
     AppTimer, EventQueue, HotkeyHost, HotkeyRegistration, PillWindow, RemoteWindow, TimerHost,
     WinEvent,
@@ -38,6 +39,9 @@ pub const TIMER_BACKOFF: usize = 3;
 /// How long a hidden pill is kept before it is destroyed.
 const PILL_IDLE: Duration = Duration::from_mins(5);
 
+/// An Enter this soon after a question appeared does not answer it.
+const READ_FIRST: Duration = Duration::from_millis(400);
+
 /// Settings text mode needs.
 pub struct TextSettings {
     /// `[llm] model`.
@@ -52,6 +56,8 @@ pub struct TextSettings {
     pub stt: SttConfig,
     /// `[tts]`.
     pub tts: TtsConfig,
+    /// `[tools]`.
+    pub tools: ToolsConfig,
     /// `[wake] follow_up`.
     pub follow_up: bool,
     /// `[wake] hotkey_text`.
@@ -67,6 +73,9 @@ pub struct TextMode {
     runtime: Option<Runtime<Request, Update>>,
     history: History,
     last_prompt: Option<String>,
+    policy: Policy,
+    /// When the latest tool question was shown.
+    asked: Instant,
     queue: EventQueue,
     window: RemoteWindow,
     timers: TimerHost,
@@ -103,6 +112,8 @@ impl TextMode {
             runtime: None,
             history: History::new(),
             last_prompt: None,
+            policy: Policy::new(&settings.tools),
+            asked: Instant::now(),
             queue,
             window,
             timers,
@@ -150,6 +161,10 @@ impl TextMode {
             return;
         };
         match event {
+            // Too soon to have been read: this Enter was not an answer.
+            WinEvent::PillSubmit
+                if matches!(self.interaction.state(), State::Confirming { .. })
+                    && self.asked.elapsed() < READ_FIRST => {}
             WinEvent::PillSubmit => {
                 let text = pill.take_input();
                 if !text.trim().is_empty() {
@@ -208,6 +223,11 @@ impl TextMode {
                     }
                     Event::LlmDone { turn }
                 }
+                Update::Question { turn, ask, summary } => {
+                    self.asked = Instant::now();
+                    Event::ToolQuestion { turn, ask, summary }
+                }
+                Update::Answered { turn, ask, yes } => Event::ToolAnswered { turn, ask, yes },
                 Update::SpeakingStarted { turn } => Event::SpeakingStarted { turn },
                 Update::PlaybackDone { turn } => Event::PlaybackDone { turn },
                 Update::Failed { turn, error } => {
@@ -383,13 +403,20 @@ impl TextMode {
 
     /// A chat turn over the history as it stands.
     fn chat_turn(&self, channel: Channel, turn: u64) -> ChatTurn {
+        let online = self.net.state().is_usable();
         ChatTurn {
             turn,
             model: self.settings.model.clone(),
             fallback_model: self.settings.fallback_model.clone(),
-            offline: (!self.net.state().is_usable()).then(|| self.settings.offline_model.clone()),
-            system: system_prompt(channel, &self.settings.user_name, &sohi_win::local_time()),
+            offline: (!online).then(|| self.settings.offline_model.clone()),
+            system: system_prompt(
+                channel,
+                &self.settings.user_name,
+                &sohi_win::local_time(),
+                online,
+            ),
             messages: self.history.messages(),
+            policy: self.policy.clone(),
         }
     }
 

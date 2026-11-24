@@ -509,6 +509,12 @@ never as instructions, and the system prompt says so.
 > 60 of 220 Start Menu entries have no `.lnk` (Calculator, Settings, Photos and every other Store app). Uninstallers are
 > left out of the index, and `App Paths` entries are found only by their exact name.
 
+> SPEC CHANGE (2026-11-24): once a turn has read text from outside (`clipboard_get`, `shell_exec`), **every** later call of
+> that turn is confirmed, whatever `[tools]` says. Otherwise text on the clipboard could have the model open an address
+> that carries the clipboard away. A permit type enforces this: the executor takes nothing else. In a turn the model may
+> call tools over at most 5 rounds. Enter is a yes only with an empty input and not within 400 ms of the question; typed
+> text that is not a plain yes is a no. The question never takes the keyboard.
+
 ### 5.7 Config & secrets
 `%APPDATA%\Sohi\config.toml`. On first run, write it with defaults and comments. The config is re-read when the user picks
 "Open config" and the file's mtime has changed (no file watcher).

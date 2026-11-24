@@ -11,13 +11,11 @@ use std::time::Instant;
 
 use sohi_core::chat::Message;
 use sohi_core::config::{SttConfig, TtsConfig};
-use sohi_core::secret::{KeyName, Secret};
-use sohi_providers::retry::{jitter_seed, retry_delay, retry_once};
-use sohi_providers::{
-    Anthropic, ChatRequest, HttpClient, Mistral, ProviderError, anthropic, mistral,
-};
+use sohi_providers::{HttpClient, ProviderError};
+use sohi_tools::Policy;
 use tokio::sync::mpsc::Receiver;
 
+use crate::actions::Toolbox;
 use crate::runtime::UiLink;
 
 /// UI → runtime.
@@ -69,6 +67,8 @@ pub struct ChatTurn {
     pub system: String,
     /// The conversation, ending with the new prompt.
     pub messages: Vec<Message>,
+    /// Which tools may be used, and how.
+    pub policy: Policy,
 }
 
 /// One voice turn: its [`ChatTurn`] holds the conversation *before* the
@@ -136,6 +136,24 @@ pub enum Update {
         /// The whole reply, for the history.
         reply: String,
     },
+    /// A tool call needs the user's permission.
+    Question {
+        /// The turn.
+        turn: u64,
+        /// Which of its questions this is.
+        ask: u32,
+        /// What would run.
+        summary: String,
+    },
+    /// A question was answered by voice, or got no answer in time.
+    Answered {
+        /// The turn.
+        turn: u64,
+        /// The question.
+        ask: u32,
+        /// The answer.
+        yes: bool,
+    },
     /// The reply to a voice turn is being heard; its level follows as
     /// [`Update::Level`].
     SpeakingStarted {
@@ -190,6 +208,8 @@ trait TurnRunner {
 #[derive(Default)]
 pub struct ProviderRunner {
     http: SharedClient,
+    /// What tools run on.
+    pub toolbox: Toolbox,
     /// When the connection was last warmed (spec §3.3: cached 60 s).
     pub prewarmed: Option<Instant>,
 }
@@ -226,8 +246,10 @@ impl TurnRunner for ProviderRunner {
                 let id = turn.turn;
                 match self.client() {
                     Ok(http) => match &turn.offline {
-                        Some(model) => crate::offline::answer(&http, &turn, model, ui).await,
-                        None => answer(&http, &turn, ui).await,
+                        Some(model) => {
+                            crate::offline::answer(&http, &turn, model, &self.toolbox, ui).await;
+                        }
+                        None => crate::reply::answer(&http, &turn, &self.toolbox, ui).await,
                     },
                     Err(error) => {
                         log::warn!("turn {id} failed: {error}");
@@ -244,15 +266,25 @@ impl TurnRunner for ProviderRunner {
 pub async fn serve(requests: Receiver<Request>, ui: UiLink<Update>) {
     let runner = ProviderRunner::default();
     let http = Rc::clone(&runner.http);
-    let probe = move |id, ui: &UiLink<Update>| crate::probe::start(&http, id, ui);
-    serve_with(requests, ui, runner, probe).await;
+    let answers = runner.toolbox.answers();
+    let aside = move |aside, ui: &UiLink<Update>| match aside {
+        Aside::Probe { id } => crate::probe::start(&http, id, ui),
+        Aside::Answer { turn, ask, yes } => answers.give(turn, ask, yes),
+    };
+    serve_with(requests, ui, runner, aside).await;
+}
+
+/// What is done beside any turn.
+enum Aside {
+    Probe { id: u64 },
+    Answer { turn: u64, ask: u32, yes: bool },
 }
 
 async fn serve_with(
     mut requests: Receiver<Request>,
     ui: UiLink<Update>,
     mut runner: impl TurnRunner,
-    probe: impl Fn(u64, &UiLink<Update>),
+    aside: impl Fn(Aside, &UiLink<Update>),
 ) {
     let mut next = None;
     loop {
@@ -269,15 +301,15 @@ async fn serve_with(
             Request::Listen(listen) => Job::Listen(listen),
             Request::Cancel { .. } => continue,
             Request::Answer { turn, ask, yes } => {
-                log::info!("turn {turn} already ended: answer {yes} to question {ask} dropped");
+                aside(Aside::Answer { turn, ask, yes }, &ui);
                 continue;
             }
             Request::Probe { id } => {
-                probe(id, &ui);
+                aside(Aside::Probe { id }, &ui);
                 continue;
             }
         };
-        match run_cancellable(&mut runner, job, &mut requests, &ui, &probe).await {
+        match run_cancellable(&mut runner, job, &mut requests, &ui, &aside).await {
             Outcome::Finished => {}
             Outcome::Cancelled { turn, at } => log::info!(
                 "turn {turn} cancelled {:.1} ms after the request; its HTTP request was dropped",
@@ -310,7 +342,7 @@ async fn run_cancellable(
     job: Job,
     requests: &mut Receiver<Request>,
     ui: &UiLink<Update>,
-    probe: &impl Fn(u64, &UiLink<Update>),
+    aside: &impl Fn(Aside, &UiLink<Update>),
 ) -> Outcome {
     let id = job.id();
     let run = runner.run(job, ui);
@@ -327,185 +359,17 @@ async fn run_cancellable(
                     return Outcome::Cancelled { turn, at };
                 }
                 // Cancelling a turn that already ended: keep going.
-                Some(Request::Cancel { .. } | Request::Answer { .. }) => {}
-                Some(Request::Probe { id }) => probe(id, ui),
+                Some(Request::Cancel { .. }) => {}
+                Some(Request::Answer { turn, ask, yes }) => {
+                    aside(Aside::Answer { turn, ask, yes }, ui);
+                }
+                Some(Request::Probe { id }) => aside(Aside::Probe { id }, ui),
                 Some(request) => {
                     log::info!("turn {id} replaced by a newer one");
                     return Outcome::Replaced(request);
                 }
                 None => return Outcome::Closed,
             },
-        }
-    }
-}
-
-/// Streams the reply to `turn` and reports how it ended.
-pub async fn answer(http: &HttpClient, turn: &ChatTurn, ui: &UiLink<Update>) {
-    let id = turn.turn;
-    let on_text = |delta: &str| {
-        ui.send(Update::Delta {
-            turn: id,
-            text: delta.to_owned(),
-        });
-    };
-    match chat(http, turn, &on_text).await {
-        Ok(reply) => {
-            ui.send(Update::Done { turn: id, reply });
-        }
-        Err(error) => {
-            log::warn!("turn {id} failed: {error}");
-            ui.send(Update::Failed { turn: id, error });
-        }
-    }
-}
-
-/// Asks Mistral, then the fallback provider if Mistral failed before
-/// writing anything (spec §2.3). A reply already under way is never
-/// restarted elsewhere: the user would see it twice.
-/// Calls `on_text` with each piece; returns the whole reply.
-pub async fn chat(
-    http: &HttpClient,
-    turn: &ChatTurn,
-    on_text: &dyn Fn(&str),
-) -> Result<String, ProviderError> {
-    let mut reply = String::new();
-    let primary = attempt(
-        Provider::Mistral,
-        http,
-        &turn.model,
-        turn,
-        on_text,
-        &mut reply,
-    )
-    .await;
-    let error = match primary {
-        Ok(()) => return Ok(reply),
-        Err(error) => error,
-    };
-    if !reply.is_empty() || turn.fallback_model.is_empty() || error == ProviderError::Cancelled {
-        return Err(error);
-    }
-    log::info!(
-        "turn {}: Mistral failed ({error}); trying Anthropic",
-        turn.turn
-    );
-    match attempt(
-        Provider::Anthropic,
-        http,
-        &turn.fallback_model,
-        turn,
-        on_text,
-        &mut reply,
-    )
-    .await
-    {
-        Ok(()) => Ok(reply),
-        // A fallback that was never set up says nothing new: report why
-        // the primary failed.
-        Err(ProviderError::MissingKey(_)) => Err(error),
-        Err(fallback) => Err(fallback),
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Provider {
-    Mistral,
-    Anthropic,
-}
-
-impl Provider {
-    fn key(self) -> KeyName {
-        match self {
-            Self::Mistral => KeyName::Mistral,
-            Self::Anthropic => KeyName::Anthropic,
-        }
-    }
-}
-
-/// One provider, with one retry for a 429 or 5xx before any text.
-async fn attempt(
-    provider: Provider,
-    http: &HttpClient,
-    model: &str,
-    turn: &ChatTurn,
-    on_text: &dyn Fn(&str),
-    reply: &mut String,
-) -> Result<(), ProviderError> {
-    let delay = retry_delay(jitter_seed());
-    let on_retry = |error: &ProviderError| {
-        log::info!(
-            "turn {}: {provider:?} failed ({error}); retrying in {} ms",
-            turn.turn,
-            delay.as_millis()
-        );
-    };
-    retry_once(reply, delay, on_retry, async |reply: &mut String| {
-        stream(provider, http, model, turn, on_text, reply).await
-    })
-    .await
-}
-
-/// Streams one attempt into `reply`, forwarding each piece.
-async fn stream(
-    provider: Provider,
-    http: &HttpClient,
-    model: &str,
-    turn: &ChatTurn,
-    on_text: &dyn Fn(&str),
-    reply: &mut String,
-) -> Result<(), ProviderError> {
-    let key = read_key(provider.key())?;
-    let request = ChatRequest {
-        model,
-        system: &turn.system,
-        messages: &turn.messages,
-        tools: &[],
-    };
-    let started = Instant::now();
-    log::info!(
-        "turn {} started on {provider:?} ({} messages)",
-        turn.turn,
-        turn.messages.len()
-    );
-    let mut on_delta = |delta: &str| {
-        if reply.is_empty() {
-            log::info!(
-                "turn {} first token after {} ms",
-                turn.turn,
-                started.elapsed().as_millis()
-            );
-        }
-        reply.push_str(delta);
-        on_text(delta);
-    };
-    match provider {
-        Provider::Mistral => {
-            Mistral::new(http.clone(), mistral::BASE_URL)
-                .chat_stream(&key, &request, &mut on_delta)
-                .await?;
-        }
-        Provider::Anthropic => {
-            Anthropic::new(http.clone(), anthropic::BASE_URL)
-                .chat_stream(&key, &request, &mut on_delta)
-                .await?;
-        }
-    }
-    log::info!(
-        "turn {} done in {} ms ({} chars)",
-        turn.turn,
-        started.elapsed().as_millis(),
-        reply.chars().count()
-    );
-    Ok(())
-}
-
-pub(crate) fn read_key(name: KeyName) -> Result<Secret, ProviderError> {
-    match sohi_win::read_key(name.target()) {
-        Ok(Some(key)) => Ok(key),
-        Ok(None) => Err(ProviderError::MissingKey(name.as_str())),
-        Err(err) => {
-            log::warn!("cannot read the {} key: {err}", name.as_str());
-            Err(ProviderError::MissingKey(name.as_str()))
         }
     }
 }

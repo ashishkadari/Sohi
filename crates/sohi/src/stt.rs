@@ -10,7 +10,7 @@ mod tests {
     use sohi_providers::voxtral::TranscribeRequest;
     use sohi_providers::{HttpClient, Mistral, Voxtral, mistral};
 
-    use crate::chat::read_key;
+    use crate::reply::read_key;
 
     /// The fixture phrases and what was said.
     const PHRASES: [(&str, &str); 5] = [

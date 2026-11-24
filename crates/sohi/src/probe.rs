@@ -5,7 +5,8 @@ use std::time::Instant;
 use sohi_core::secret::KeyName;
 use sohi_providers::{mistral, probe};
 
-use crate::chat::{SharedClient, Update, read_key, shared_client};
+use crate::chat::{SharedClient, Update, shared_client};
+use crate::reply::read_key;
 use crate::runtime::UiLink;
 
 /// Starts probe `id` beside whatever is running.

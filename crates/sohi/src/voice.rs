@@ -21,7 +21,8 @@ use sohi_core::secret::KeyName;
 use sohi_providers::voxtral::TranscribeRequest;
 use sohi_providers::{HttpClient, Mistral, ProviderError, Voxtral, mistral};
 
-use crate::chat::{ListenTurn, ProviderRunner, Update, read_key};
+use crate::chat::{ListenTurn, ProviderRunner, Update};
+use crate::reply::read_key;
 use crate::runtime::UiLink;
 use crate::speak::answer_aloud;
 
@@ -75,7 +76,7 @@ pub async fn run(runner: &mut ProviderRunner, listen: ListenTurn, ui: &UiLink<Up
     }
     let mut chat = listen.chat;
     chat.messages.push(Message::user(text));
-    answer_aloud(&http, &chat, &listen.tts, ended, ui).await;
+    answer_aloud(&http, &chat, &listen.tts, ended, &runner.toolbox, ui).await;
 }
 
 /// Warms the connection (TCP + TLS) in the background, at most once a
@@ -370,8 +371,9 @@ mod tests {
                 model: LlmConfig::default().model,
                 fallback_model: String::new(),
                 offline: None,
-                system: system_prompt(Channel::Spoken, "", &sohi_win::local_time()),
+                system: system_prompt(Channel::Spoken, "", &sohi_win::local_time(), true),
                 messages: Vec::new(),
+                policy: sohi_tools::Policy::default(),
             };
             let listen = ListenTurn {
                 chat,

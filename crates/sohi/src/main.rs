@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 #![windows_subsystem = "windows"]
 
+mod actions;
 mod app;
 mod chat;
 mod config_file;
@@ -15,6 +16,7 @@ mod offline;
 mod offline_flag;
 mod perf;
 mod probe;
+mod reply;
 mod runtime;
 mod set_key;
 mod speak;
@@ -131,6 +133,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         user_name: config.persona.user_name.clone(),
         stt: config.stt.clone(),
         tts: config.tts.clone(),
+        tools: config.tools.clone(),
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {

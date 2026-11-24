@@ -39,6 +39,7 @@ fn turn(id: u64) -> Request {
         offline: None,
         system: String::new(),
         messages: Vec::new(),
+        policy: Policy::default(),
     })
 }
 
