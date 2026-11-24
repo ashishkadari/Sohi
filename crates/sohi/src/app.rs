@@ -10,7 +10,6 @@ use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::interaction::Event as TextEvent;
 use sohi_core::visibility::Input;
 use sohi_core::wake::CornerSettings;
-use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{
     AppTimer, AppWindow, EventQueue, FrameTimer, HotkeyHost, NetworkWatch, Presence, PresenceWatch,
     RemoteWindow, TimerHost, TrayIcon, WinError, WinEvent,
@@ -330,12 +329,8 @@ impl App {
         };
         log::info!("menu: {command:?}");
         match command {
-            MenuCommand::OpenConfig => open_config(&self.paths.config),
-            MenuCommand::OpenLogFolder => {
-                if let Err(err) = open_path(&self.paths.logs) {
-                    log::warn!("cannot open log folder: {err:?}");
-                }
-            }
+            MenuCommand::OpenConfig => open(&self.paths.config),
+            MenuCommand::OpenLogFolder => open(&self.paths.logs),
             MenuCommand::Quit => {
                 if let Err(err) = self.main_window.post_close() {
                     log::error!("cannot quit cleanly: {err}");
@@ -393,14 +388,9 @@ fn toggle_autostart(on_now: bool) {
     }
 }
 
-/// Opens the config in its associated editor, or Notepad if `.toml` has
-/// no association (common on a fresh Windows install).
-fn open_config(path: &Path) {
-    let result = match open_path(path) {
-        Err(OpenError::NoAssociation) => open_with("notepad.exe", path),
-        other => other,
-    };
-    if let Err(err) = result {
-        log::warn!("cannot open config: {err:?}");
+/// Opens the config or the log folder.
+fn open(path: &Path) {
+    if let Err(err) = sohi_tools::helper::open_soon(path) {
+        log::warn!("cannot open {}: {err}", path.display());
     }
 }
