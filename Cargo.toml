@@ -16,6 +16,7 @@ sohi-audio = { path = "crates/sohi-audio" }
 sohi-core = { path = "crates/sohi-core" }
 sohi-providers = { path = "crates/sohi-providers" }
 sohi-render = { path = "crates/sohi-render" }
+sohi-tools = { path = "crates/sohi-tools" }
 sohi-win = { path = "crates/sohi-win" }
 
 earshot = { version = "1.2.2", default-features = false, features = ["std"] }

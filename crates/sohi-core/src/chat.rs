@@ -48,3 +48,14 @@ impl Message {
         }
     }
 }
+
+/// A tool as a model is told about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolSpec {
+    /// What the model calls it.
+    pub name: &'static str,
+    /// What it does.
+    pub description: &'static str,
+    /// The JSON Schema of its arguments, as JSON text.
+    pub parameters: &'static str,
+}
