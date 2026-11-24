@@ -6,6 +6,7 @@ pub mod answer;
 pub mod chat;
 pub mod config;
 pub mod connectivity;
+pub mod full;
 pub mod geometry;
 pub mod history;
 pub mod hotkey;
