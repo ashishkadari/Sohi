@@ -8,6 +8,7 @@ mod desktop;
 mod executor;
 #[cfg(test)]
 mod fake;
+pub mod helper;
 mod policy;
 mod registry;
 #[cfg(feature = "shell")]

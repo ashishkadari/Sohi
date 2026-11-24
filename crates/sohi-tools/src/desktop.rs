@@ -1,11 +1,9 @@
 //! What the tools do to the PC, behind a trait so tests never touch it.
 
-use std::path::Path;
-
 use sohi_win::{MediaKey, WinError};
 
-use crate::MediaAction;
 use crate::apps::{App, start_menu};
+use crate::{MediaAction, helper};
 
 /// The PC the tools act on. Errors are short texts for the model and the
 /// user.
@@ -58,7 +56,8 @@ pub struct WinDesktop;
 impl Desktop for WinDesktop {
     fn apps(&mut self) -> Vec<App> {
         let mut apps = start_menu();
-        match sohi_win::apps_folder() {
+        let found = helper::list().map_or_else(sohi_win::apps_folder, Ok);
+        match found {
             Ok(found) => apps.extend(found.into_iter().map(|(name, target)| App {
                 name,
                 target,
@@ -75,10 +74,14 @@ impl Desktop for WinDesktop {
     }
 
     fn open(&mut self, target: &str) -> Result<(), String> {
-        sohi_win::shell::open_path(Path::new(target)).map_err(|err| {
-            log::warn!("cannot open: {err:?}");
-            "Windows could not open it".to_owned()
-        })
+        let opened = helper::open(target)
+            .inspect_err(|err| log::warn!("cannot start the helper: {err}"))
+            .unwrap_or(false);
+        if opened {
+            Ok(())
+        } else {
+            Err("Windows could not open it".to_owned())
+        }
     }
 
     fn clipboard(&mut self, max_bytes: usize) -> Result<Option<String>, String> {
