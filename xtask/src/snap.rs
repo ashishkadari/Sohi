@@ -5,6 +5,8 @@
 //!
 //! Default output: `target/snap/`.
 
+mod cape;
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -86,6 +88,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             sheet.place(col, row, w, &rgba);
         }
     }
+    cape::sheets(&out)?;
     let file = out.join("sheet.png");
     std::fs::write(&file, png::encode(sheet.width, sheet.height, &sheet.pixels))
         .map_err(|e| format!("cannot write {}: {e}", file.display()))?;

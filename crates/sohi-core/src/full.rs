@@ -86,7 +86,7 @@ impl Take {
     #[must_use]
     pub fn duration(self) -> Duration {
         Duration::from_millis(match self {
-            Self::Over => 1900,
+            Self::Over => 2100,
             Self::Back => 800,
         })
     }
@@ -96,7 +96,7 @@ impl Take {
     #[must_use]
     pub fn covered_at(self) -> Duration {
         Duration::from_millis(match self {
-            Self::Over => 1080,
+            Self::Over => 1280,
             Self::Back => 180,
         })
     }
@@ -108,16 +108,16 @@ impl Take {
         match self {
             Self::Over => Moment {
                 turn: ease(span(ms, 0.0, 380.0)),
-                sweep: ease(span(ms, 260.0, 1060.0)),
-                cape: 1.0 - ease(span(ms, 1500.0, 1900.0)),
-                head: 1.0 - span(ms, 900.0, 1000.0),
-                figure: span(ms, 1000.0, 1250.0) * (1.0 - span(ms, 1820.0, 1900.0)),
-                eyes: ease(span(ms, 1180.0, 1380.0)),
-                travel: ease(span(ms, 1450.0, 1850.0)),
+                sweep: steady(span(ms, 240.0, 1260.0)),
+                cape: 1.0 - ease(span(ms, 1720.0, 2100.0)),
+                head: 1.0 - span(ms, 1050.0, 1150.0),
+                figure: span(ms, 1200.0, 1430.0) * (1.0 - span(ms, 2020.0, 2100.0)),
+                eyes: ease(span(ms, 1380.0, 1560.0)),
+                travel: ease(span(ms, 1650.0, 2050.0)),
             },
             Self::Back => Moment {
                 turn: 1.0 - ease(span(ms, 500.0, 780.0)),
-                sweep: 1.0 - ease(span(ms, 200.0, 740.0)),
+                sweep: 1.0 - steady(span(ms, 200.0, 740.0)),
                 cape: span(ms, 0.0, 170.0),
                 head: span(ms, 250.0, 350.0),
                 ..Moment::default()
@@ -129,6 +129,11 @@ impl Take {
 /// How far `ms` is between `from` and `to`.
 fn span(ms: f32, from: f32, to: f32) -> f32 {
     ((ms - from) / (to - from)).clamp(0.0, 1.0)
+}
+
+/// Between [`ease`] and a constant speed.
+fn steady(x: f32) -> f32 {
+    f32::midpoint(x, ease(x))
 }
 
 /// Slow, fast, slow.

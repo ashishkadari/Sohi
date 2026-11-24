@@ -1,13 +1,16 @@
 //! Pure renderer: turns a visual state and time into a premultiplied pixmap.
 //!
-//! [`HeadRenderer`] draws the head (spec §4.5). [`test_card`] is a neutral
+//! [`HeadRenderer`] draws the head (spec §4.5) and [`CapeRenderer`] the
+//! full mode animations (§4.9). [`test_card`] is a neutral
 //! frame kept for plumbing checks (`--dev-test-card`), and [`tray_icon`]
 //! draws the notification-area icon.
 
 #![forbid(unsafe_code)]
 
+mod cape;
 mod head;
 
+pub use cape::CapeRenderer;
 pub use head::{HeadRenderer, Rendered, Scene};
 
 /// A neutral, deliberately non-final frame for plumbing tests.
