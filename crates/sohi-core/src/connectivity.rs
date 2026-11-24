@@ -104,10 +104,6 @@ pub struct Connectivity {
     stale: bool,
 }
 
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "independent facts, each set by its own event"
-)]
 impl Connectivity {
     /// Starts online (the first request finds out), or forced offline.
     #[must_use]

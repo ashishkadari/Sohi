@@ -26,6 +26,8 @@ const NIN_KEYSELECT: u32 = 0x0401;
 const WM_CONTEXTMENU: u32 = 0x007B;
 /// Posted by the runtime thread after it queues updates for the UI.
 const WM_APP_EVENT: u32 = WM_APP + 2; // WM_APP + 1 is the tray callback
+/// wParam: 1 if there is internet access.
+const WM_APP_NETWORK: u32 = WM_APP + 3;
 
 /// The hidden top-level window that receives app-wide messages.
 pub struct AppWindow {
@@ -137,8 +139,8 @@ impl WndHandler for AppHandler {
                 self.queue.push(WinEvent::DisplayChanged);
                 Some(LRESULT(0))
             }
-            WM_APP_EVENT => {
-                self.queue.push(WinEvent::Runtime);
+            WM_APP_EVENT | WM_APP_NETWORK => {
+                self.queue.push(posted(msg, wparam));
                 Some(LRESULT(0))
             }
             m if m == self.wake_message => {
@@ -155,6 +157,17 @@ impl WndHandler for AppHandler {
     }
 }
 
+/// The event for a message other threads post.
+fn posted(msg: u32, wparam: WPARAM) -> WinEvent {
+    if msg == WM_APP_NETWORK {
+        WinEvent::NetworkHint {
+            internet: wparam.0 != 0,
+        }
+    } else {
+        WinEvent::Runtime
+    }
+}
+
 /// A thread-safe reference to an [`AppWindow`], usable only for posting.
 #[derive(Debug, Clone, Copy)]
 pub struct RemoteWindow(usize);
@@ -165,7 +178,7 @@ impl RemoteWindow {
     /// # Errors
     /// Returns [`WinError`] if the window no longer exists.
     pub fn post_close(self) -> Result<(), WinError> {
-        self.post(WM_CLOSE)
+        self.post(WM_CLOSE, 0)
     }
 
     /// Tells the UI thread that the runtime thread queued updates
@@ -175,14 +188,19 @@ impl RemoteWindow {
     /// Returns [`WinError`] if the window no longer exists or its message
     /// queue is full.
     pub fn post_runtime_event(self) -> Result<(), WinError> {
-        self.post(WM_APP_EVENT)
+        self.post(WM_APP_EVENT, 0)
     }
 
-    fn post(self, msg: u32) -> Result<(), WinError> {
+    /// Reports a network hint ([`WinEvent::NetworkHint`]).
+    pub(crate) fn post_network_hint(self, internet: bool) -> Result<(), WinError> {
+        self.post(WM_APP_NETWORK, usize::from(internet))
+    }
+
+    fn post(self, msg: u32, wparam: usize) -> Result<(), WinError> {
         let hwnd = HWND(self.0 as *mut c_void);
         // SAFETY: PostMessageW validates the window handle itself, and the
         // messages posted here carry no pointers.
-        unsafe { PostMessageW(Some(hwnd), msg, WPARAM(0), LPARAM(0)) }
+        unsafe { PostMessageW(Some(hwnd), msg, WPARAM(wparam), LPARAM(0)) }
             .map_err(|e| WinError::api("PostMessageW", &e))
     }
 }
@@ -228,6 +246,7 @@ mod tests {
         send(&window, WM_WTSSESSION_CHANGE, 7, 0); // WTS_SESSION_LOCK
         send(&window, WM_POWERBROADCAST, 18, 0); // PBT_APMRESUMEAUTOMATIC
         send(&window, WM_APP_EVENT, 0, 0);
+        send(&window, WM_APP_NETWORK, 1, 0);
         let events: Vec<_> = std::iter::from_fn(|| queue.pop()).collect();
         assert_eq!(
             events,
@@ -242,6 +261,7 @@ mod tests {
                 WinEvent::Presence(Presence::Locked(true)),
                 WinEvent::Presence(Presence::Suspended(false)),
                 WinEvent::Runtime,
+                WinEvent::NetworkHint { internet: true },
             ]
         );
     }

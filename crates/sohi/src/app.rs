@@ -183,6 +183,7 @@ impl App {
                     log::debug!("unknown timer {id}");
                 }
             }
+            WinEvent::NetworkHint { internet } => log::info!("network hint: internet {internet}"),
             WinEvent::HeadHover(over) => {
                 log::debug!("head hover: {over}");
                 self.head.input(Input::Hover(over));
