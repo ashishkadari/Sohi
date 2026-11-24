@@ -7,7 +7,7 @@ use serde_json::json;
 use crate::apps::AppIndex;
 use sohi_win::MediaResult;
 
-use crate::{Call, Desktop, MediaAction, Permit, VolumeAction, one_line, url};
+use crate::{Agenda, Call, Desktop, MediaAction, Permit, VolumeAction, one_line, url};
 
 /// How much of the clipboard a model may see (spec §5.6).
 const CLIPBOARD_BYTES: usize = 8 * 1024;
@@ -81,6 +81,7 @@ impl Outcome {
 pub struct Executor<D> {
     desktop: D,
     apps: AppIndex,
+    agenda: Agenda,
 }
 
 impl<D: Desktop> Executor<D> {
@@ -89,7 +90,15 @@ impl<D: Desktop> Executor<D> {
         Self {
             desktop,
             apps: AppIndex::default(),
+            agenda: Agenda::default(),
         }
+    }
+
+    /// The reminders its calls are about.
+    #[must_use]
+    pub fn with_agenda(mut self, agenda: Agenda) -> Self {
+        self.agenda = agenda;
+        self
     }
 
     /// Runs what was permitted. Blocks until it is done.
@@ -105,6 +114,9 @@ impl<D: Desktop> Executor<D> {
             Call::ClipboardSet { text } => self.clipboard_set(text),
             Call::Media(action) => self.media(*action),
             Call::Volume(action) => self.volume(*action),
+            Call::ReminderSet { text, when, repeat } => self.agenda.set(text, *when, *repeat),
+            Call::ReminderList => self.agenda.tell(),
+            Call::ReminderCancel { id } => self.agenda.cancel(*id),
             #[cfg(feature = "shell")]
             Call::ShellExec { command } => shell_exec(command),
         }

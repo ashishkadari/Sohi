@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod agenda;
 pub mod apps;
 mod call;
 mod desktop;
@@ -15,6 +16,7 @@ mod registry;
 pub mod shell;
 pub mod url;
 
+pub use agenda::Agenda;
 pub use call::{Call, CallError, MediaAction, VolumeAction, one_line};
 pub use desktop::{Desktop, WinDesktop};
 pub use executor::{Executor, Outcome};

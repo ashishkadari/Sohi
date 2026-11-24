@@ -36,6 +36,29 @@ impl Interaction {
         })
     }
 
+    /// The transcript is in: show it and let the model answer, or say
+    /// nothing was heard. The pill shows without taking focus.
+    pub(super) fn heard(&mut self, turn: u64, text: &str) -> Vec<Effect> {
+        self.focused = false;
+        self.has_input = false;
+        let text = text.trim();
+        if text.is_empty() {
+            self.state = State::TextEntry;
+            return vec![
+                Effect::ShowPill { focus: false },
+                Effect::SetBubble("Didn't catch that.".to_owned()),
+                Effect::SetVisual(VisualState::Idle),
+                Effect::Keep(RetractRule::ReplyDone),
+            ];
+        }
+        self.state = State::Thinking { turn };
+        vec![
+            Effect::ShowPill { focus: false },
+            Effect::SetBubble(format!("› {text}\n")),
+            Effect::SetVisual(VisualState::Thinking),
+        ]
+    }
+
     /// A voice turn's reply was heard: listen for a follow-up, unless the
     /// user is at the pill.
     fn spoken(&mut self) -> Vec<Effect> {

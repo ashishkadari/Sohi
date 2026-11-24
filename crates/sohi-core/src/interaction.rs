@@ -9,6 +9,7 @@
 //! delta can never leak into the next reply.
 
 mod confirm;
+mod notice;
 mod speech;
 
 use std::time::Duration;
@@ -155,6 +156,14 @@ pub enum Event {
     },
     /// [`ERROR_HOLD`] passed.
     ErrorShown,
+    /// Something to tell the user without being asked. Dropped unless
+    /// [`Interaction::can_announce`].
+    Announce {
+        /// What.
+        text: String,
+        /// Whether to say it as well.
+        aloud: bool,
+    },
     /// Esc (or Alt+F4 on the pill).
     Escape,
     /// The head retracted by itself (a retract rule fired).
@@ -179,6 +188,8 @@ pub enum Effect {
     HidePill,
     /// Replace the bubble's text.
     SetBubble(String),
+    /// Add a notice to what the bubble holds.
+    AddNotice(String),
     /// Append to the bubble.
     AppendBubble(String),
     /// Start a text turn.
@@ -192,6 +203,13 @@ pub enum Effect {
     StartListening {
         /// Its id.
         turn: u64,
+    },
+    /// Say something that needs no model.
+    Say {
+        /// Its turn's id.
+        turn: u64,
+        /// What.
+        text: String,
     },
     /// Cancel the running turn.
     CancelTurn {
@@ -224,6 +242,8 @@ enum Source {
     Wake,
     /// The mic reopened after a voice reply; the pill is open.
     FollowUp,
+    /// Sohi spoke first.
+    Notice,
 }
 
 /// The Interaction region.
@@ -316,6 +336,7 @@ impl Interaction {
         };
         let special = self
             .confirm_step(&event)
+            .or_else(|| self.notice_step(&event))
             .or_else(|| self.voice_step(&event))
             .or_else(|| self.speech_step(&event));
         if let Some(effects) = special {
@@ -492,29 +513,6 @@ impl Interaction {
         vec![
             Effect::SetVisual(VisualState::Idle),
             Effect::Keep(self.entry_rule()),
-        ]
-    }
-
-    /// The transcript is in: show it and let the model answer, or say
-    /// nothing was heard. The pill shows without taking focus.
-    fn heard(&mut self, turn: u64, text: &str) -> Vec<Effect> {
-        self.focused = false;
-        self.has_input = false;
-        let text = text.trim();
-        if text.is_empty() {
-            self.state = State::TextEntry;
-            return vec![
-                Effect::ShowPill { focus: false },
-                Effect::SetBubble("Didn't catch that.".to_owned()),
-                Effect::SetVisual(VisualState::Idle),
-                Effect::Keep(RetractRule::ReplyDone),
-            ];
-        }
-        self.state = State::Thinking { turn };
-        vec![
-            Effect::ShowPill { focus: false },
-            Effect::SetBubble(format!("› {text}\n")),
-            Effect::SetVisual(VisualState::Thinking),
         ]
     }
 

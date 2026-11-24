@@ -1,6 +1,7 @@
 //! The local wall clock.
 
 use sohi_core::persona::LocalTime;
+use sohi_core::stamp::{Clock, Date, Stamp};
 use windows::Win32::System::SystemInformation::GetLocalTime;
 
 /// The current local date and time.
@@ -16,6 +17,20 @@ pub fn local_time() -> LocalTime {
         weekday: byte(t.wDayOfWeek),
         hour: byte(t.wHour),
         minute: byte(t.wMinute),
+    }
+}
+
+/// What the clock shows right now.
+#[must_use]
+pub fn local_stamp() -> Stamp {
+    // SAFETY: no preconditions.
+    let t = unsafe { GetLocalTime() };
+    let date = Date::new(t.wYear.into(), t.wMonth.into(), t.wDay.into());
+    let clock = Clock::new(t.wHour.into(), t.wMinute.into(), t.wSecond.into());
+    // Windows only has real dates and times.
+    match (date, clock) {
+        (Some(date), Some(clock)) => date.at(clock),
+        _ => Stamp::default(),
     }
 }
 

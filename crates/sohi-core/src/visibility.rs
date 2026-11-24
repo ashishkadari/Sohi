@@ -24,6 +24,8 @@ pub const REPLY_LINGER: Duration = Duration::from_millis(2500);
 pub const TEXT_REPLY_UNFOCUSED: Duration = Duration::from_secs(10);
 /// How long the head stays up after an error.
 pub const ERROR_LINGER: Duration = Duration::from_secs(3);
+/// How long a notice stays.
+pub const NOTICE_LINGER: Duration = Duration::from_secs(60);
 
 /// The auto-retract rules (spec §4.4). Hover pausing is handled by
 /// [`Input::Hover`] on top of whichever rule is in force.
@@ -39,6 +41,8 @@ pub enum RetractRule {
     Working,
     /// A text reply is shown and the pill is not focused.
     TextReplyUnfocused,
+    /// Something Sohi said unasked (a reminder).
+    Notice,
     /// Something failed. With the pill open the error stays until the
     /// user acts.
     Error {
@@ -56,6 +60,7 @@ impl RetractRule {
             Self::NoSpeech => Some(NO_SPEECH_TIMEOUT + NO_SPEECH_GRACE),
             Self::ReplyDone => Some(REPLY_LINGER),
             Self::TextReplyUnfocused => Some(TEXT_REPLY_UNFOCUSED),
+            Self::Notice => Some(NOTICE_LINGER),
             Self::Error { pill_open: false } => Some(ERROR_LINGER),
             Self::TextFocused | Self::Working | Self::Error { pill_open: true } => None,
         }

@@ -25,7 +25,7 @@ use sohi_win::Playback;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::actions::{Actions, Toolbox};
-use crate::chat::{ChatTurn, Update};
+use crate::chat::{ChatTurn, SayTurn, Update};
 use crate::reply::{chat, read_key};
 use crate::runtime::UiLink;
 use crate::yes_no::VoiceEar;
@@ -111,6 +111,22 @@ pub async fn answer_aloud(aloud: Aloud<'_>, ui: &UiLink<Update>) {
             ui.send(Update::Failed { turn: id, error });
         }
     }
+}
+
+/// Says something that needs no model.
+pub async fn say(http: &HttpClient, turn: &SayTurn, ui: &UiLink<Update>) {
+    let speech = Speech::default();
+    let (sentences_tx, sentences) = unbounded_channel();
+    let mut chunker = SentenceChunker::new();
+    let mut parts = chunker.push(&turn.text);
+    parts.extend(chunker.flush());
+    speech.unsaid.set(parts.len());
+    // Nothing more to say after it: lets the synthesis end.
+    for part in parts.into_iter().chain([String::new()]) {
+        let _ = sentences_tx.send(part);
+    }
+    let voice = Voice::new(http, &turn.tts);
+    speak(turn.turn, voice, sentences, Instant::now(), &speech, ui).await;
 }
 
 /// What the speaking side knows about what is being said.

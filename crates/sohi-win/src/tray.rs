@@ -7,9 +7,9 @@
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::HiDpi::GetSystemMetricsForDpi;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_RESPECT_QUIET_TIME, NIIF_WARNING,
-    NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4, NOTIFYICONDATAW,
-    Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_INFO, NIIF_NOSOUND,
+    NIIF_RESPECT_QUIET_TIME, NIIF_WARNING, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION,
+    NOTIFY_ICON_INFOTIP_FLAGS, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIcon, CreatePopupMenu, DestroyIcon, DestroyMenu, HICON, MENU_ITEM_FLAGS,
@@ -108,9 +108,26 @@ impl TrayIcon {
     /// # Errors
     /// Returns [`WinError`] if the shell rejects the notification.
     pub fn warn(&self, title: &str, text: &str) -> Result<(), WinError> {
+        self.balloon(title, text, NIIF_WARNING)
+    }
+
+    /// Shows a silent notice, as [`TrayIcon::warn`] does a warning.
+    ///
+    /// # Errors
+    /// Returns [`WinError`] if the shell rejects the notification.
+    pub fn inform(&self, title: &str, text: &str) -> Result<(), WinError> {
+        self.balloon(title, text, NIIF_INFO | NIIF_NOSOUND)
+    }
+
+    fn balloon(
+        &self,
+        title: &str,
+        text: &str,
+        flags: NOTIFY_ICON_INFOTIP_FLAGS,
+    ) -> Result<(), WinError> {
         let mut data = self.data();
         data.uFlags |= NIF_INFO;
-        data.dwInfoFlags = NIIF_WARNING | NIIF_RESPECT_QUIET_TIME;
+        data.dwInfoFlags = flags | NIIF_RESPECT_QUIET_TIME;
         copy_truncated(&mut data.szInfoTitle, title);
         copy_truncated(&mut data.szInfo, text);
         // SAFETY: `data` is a fully initialized NOTIFYICONDATAW.

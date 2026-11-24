@@ -23,6 +23,8 @@ pub enum FullEvent {
     Talk,
     /// The Copy code button or Ctrl+Shift+C.
     CopyCode,
+    /// The Reminders button or Ctrl+R.
+    Reminders,
     /// The New chat button or Ctrl+N.
     NewChat,
     /// The Exit button or Alt+F4.

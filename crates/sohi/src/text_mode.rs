@@ -7,6 +7,7 @@
 
 mod full;
 mod net;
+mod remind;
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -15,13 +16,13 @@ use sohi_core::config::{SttConfig, ToolsConfig, TtsConfig};
 use sohi_core::connectivity::{Connectivity, Event as NetEvent};
 use sohi_core::full::{Command, command};
 use sohi_core::geometry::{BASE_DPI, RectPx};
-use sohi_core::history::History;
+use sohi_core::history::{History, Reach};
 use sohi_core::interaction::{ERROR_HOLD, Effect, Event, Interaction, State};
 use sohi_core::persona::{Channel, system_prompt};
 use sohi_core::pill::pill_origin;
 use sohi_core::visibility::{Input, Phase};
 use sohi_core::visual::VisualState;
-use sohi_tools::Policy;
+use sohi_tools::{Agenda, Policy};
 use sohi_win::{
     AppTimer, EventQueue, HotkeyHost, HotkeyRegistration, MonitorInfo, PillWindow, RemoteWindow,
     TimerHost, WinEvent,
@@ -33,6 +34,7 @@ use crate::head::Head;
 use crate::hotkeys;
 use crate::runtime::Runtime;
 use crate::ticker::Ticker;
+use remind::Reminding;
 
 /// App-window timer ids.
 pub const TIMER_PILL_IDLE: usize = 1;
@@ -40,6 +42,8 @@ pub const TIMER_PILL_IDLE: usize = 1;
 pub const TIMER_ERROR_HOLD: usize = 2;
 /// See [`TIMER_PILL_IDLE`].
 pub const TIMER_BACKOFF: usize = 3;
+/// See [`TIMER_PILL_IDLE`]; 4 is the tray's.
+const TIMER_REMINDER: usize = 5;
 
 /// How long a hidden pill is kept before it is destroyed.
 const PILL_IDLE: Duration = Duration::from_mins(5);
@@ -67,6 +71,10 @@ pub struct TextSettings {
     pub follow_up: bool,
     /// `[wake] hotkey_text`.
     pub hotkey_text: String,
+    /// `[reminders] speak`.
+    pub speak_reminders: bool,
+    /// The reminders.
+    pub agenda: Agenda,
     /// Start forced offline.
     pub forced_offline: bool,
 }
@@ -82,6 +90,7 @@ pub struct TextMode {
     history: History,
     last_prompt: Option<String>,
     policy: Policy,
+    reminding: Reminding,
     /// When the latest tool question was shown.
     asked: Instant,
     queue: EventQueue,
@@ -115,7 +124,7 @@ impl TextMode {
         let net = Connectivity::new(settings.forced_offline);
         let mut interaction = Interaction::new().with_follow_up(settings.follow_up);
         interaction.set_voice_available(net.state().is_usable());
-        Self {
+        let mut mode = Self {
             interaction,
             pill: None,
             full: None,
@@ -124,6 +133,7 @@ impl TextMode {
             history: History::new(),
             last_prompt: None,
             policy: Policy::new(&settings.tools),
+            reminding: Reminding::new(settings.agenda.clone(), settings.speak_reminders),
             asked: Instant::now(),
             queue,
             window,
@@ -138,7 +148,9 @@ impl TextMode {
             head_rect: RectPx::default(),
             dpi: BASE_DPI,
             settings,
-        }
+        };
+        mode.start_reminders();
+        mode
     }
 
     /// Feeds an Interaction event and carries out the effects, including
@@ -289,6 +301,10 @@ impl TextMode {
                 self.net(NetEvent::BackoffElapsed, head);
                 true
             }
+            TIMER_REMINDER => {
+                self.check_reminders(head);
+                true
+            }
             TIMER_ERROR_HOLD => {
                 self.error_hold = None;
                 self.event(Event::ErrorShown, head);
@@ -343,6 +359,8 @@ impl TextMode {
             Effect::AppendBubble(text) => self.with_pill(|p| p.append_bubble(&text)),
             Effect::StartTurn { turn, text } => return self.start_turn(turn, text),
             Effect::StartListening { turn } => return self.start_listening(turn),
+            Effect::Say { turn, text } => return self.say(turn, text),
+            Effect::AddNotice(text) => self.with_pill(|p| p.append_bubble(&format!("\n{text}\n"))),
             Effect::CancelTurn { turn } => self.cancel_turn(turn),
             Effect::AnswerTool { turn, ask, yes } => self.answer_tool(turn, ask, yes),
             Effect::SetVisual(VisualState::Idle) => head.set_visual(self.base_visual()),
@@ -386,6 +404,7 @@ impl TextMode {
     fn hide_pill(&mut self) {
         if let Some(pill) = &self.pill {
             pill.hide();
+            self.pill_idle = None;
             self.pill_idle = self.start_timer(TIMER_PILL_IDLE, PILL_IDLE);
         }
     }
@@ -451,7 +470,11 @@ impl TextMode {
                 &sohi_win::local_time(),
                 online,
             ),
-            messages: self.history.messages(),
+            messages: self.history.messages(if self.is_full() {
+                Reach::Long
+            } else {
+                Reach::Short
+            }),
             policy: self.policy.clone(),
         }
     }
@@ -485,7 +508,9 @@ impl TextMode {
 
     fn runtime(&mut self) -> Option<&Runtime<Request, Update>> {
         if self.runtime.is_none() {
-            match Runtime::start(self.window, crate::chat::serve) {
+            let agenda = self.reminding.agenda();
+            let serve = move |requests, ui| crate::chat::serve(requests, ui, agenda);
+            match Runtime::start(self.window, serve) {
                 Ok(runtime) => self.runtime = Some(runtime),
                 Err(err) => log::error!("cannot start the runtime thread: {err}"),
             }

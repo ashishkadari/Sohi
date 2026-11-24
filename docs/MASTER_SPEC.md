@@ -518,6 +518,10 @@ async fn run_turn(input: TurnInput, cancel: CancelToken, ctx: &Ctx) -> Result<()
 - **Prewarm:** on voice wake, issue `GET /v1/models` (cached 60 s) so TCP+TLS is pooled before the upload.
   Idle connections are dropped after 90 s (`pool_idle_timeout`).
 
+> SPEC CHANGE (2026-11-24, P10): how much of the conversation is sent depends on where it goes on. Outside full mode it
+> stays at 12 turns and about 4k tokens, so spoken replies start as fast as before. In full mode (typed or spoken) it is
+> up to 200 turns and about 24k tokens, because code is long. Kept in memory: what full mode can send.
+
 ### 5.6 Tools (`sohi-tools`)
 | Tool | Args | Implementation | Default policy |
 |---|---|---|---|
@@ -527,6 +531,7 @@ async fn run_turn(input: TurnInput, cancel: CancelToken, ctx: &Ctx) -> Result<()
 | `clipboard_set` | `text` | `SetClipboardData` | allow |
 | `media` | `play\|pause\|next\|prev\|mute` | Windows media sessions (`Windows.Media.Control`); `SendInput` for mute | allow |
 | `volume` | `up\|down\|set(0-100)` | `IAudioEndpointVolume` | allow |
+| `reminder_set`, `reminder_list`, `reminder_cancel` | see §5.10 | `reminders.json` | allow |
 | `shell_exec` | `command` | **Compiled out unless `--features shell`.** Runs via `CreateProcessW` with no window, 15 s timeout, output capped at 4 KB | **always confirm (cannot be overridden)** |
 
 Confirmation flow: the pill shows `Run: <summary>? Enter = Yes · Esc = No`. A voice "yes/no" is accepted by opening the mic
@@ -578,6 +583,7 @@ never as instructions, and the system prompt says so.
 [text]      speak_replies = false
 [tools]     confirm = ["clipboard_get"]   disabled = []
 [history]   persist = false
+[reminders] speak = true   # P10
 [log]       level = "info"
 ~~~
 Keys are stored in Credential Manager under targets `Sohi/mistral`, `Sohi/anthropic`, `Sohi/tts`. To set one:
@@ -594,6 +600,32 @@ Keys are stored in Credential Manager under targets `Sohi/mistral`, `Sohi/anthro
 `WM_POWERBROADCAST` (suspend: cancel the turn, close audio; resume: mark connectivity `Probing` on next wake) ·
 `WTS_SESSION_LOCK/UNLOCK` · default audio device change (`IMMNotificationClient`: reopen on next `OpenMic`; in mid-capture,
 fail the turn gracefully) · `WM_ENDSESSION` (flush the log, exit).
+
+### 5.10 Reminders (P10)
+> SPEC CHANGE (2026-11-24): added at the owner's request.
+
+- **Setting one:** by voice or typing, through the models' tools `reminder_set` (`text` of at most 120 characters, and
+  either `in_minutes` or `time` with an optional `day` (a date, `tomorrow` or a weekday); `repeat` is `daily`, `weekdays` or `weekly`), `reminder_list` and
+  `reminder_cancel`. The date arithmetic is done in code, not by the model. A `time` without a day is the next time the
+  clock shows it. Allowed without asking (like every tool, not in a turn that read outside text). At most 100 reminders,
+  at most 5 years ahead.
+- **Without the internet:** the command grammar (§5.3) has `remind me in <N> minutes|hours to <text>`,
+  `remind me to <text> in <N> minutes|hours`, `remind me at <time> to <text>`, `remind me to <text> at <time>`,
+  `set a timer for <N> minutes`, `reminders` and `cancel reminder <N>`.
+- **When one is due:** Sohi comes out, shows it in the pill (in full mode: in the transcript) and says it, with the online
+  voice or, offline, the Windows one. A toast goes out as well, so it can be found later. The head stays 60 s. The mic
+  **never** opens by itself for it.
+- **Not now:** while a turn runs it waits for the turn to end; while the session is locked or the PC asleep
+  it waits for the user to be back; with only the display off it is said all the same. While something is full screen it is shown and not spoken. A reminder more
+  than 2 minutes late says when it was due.
+- **Snooze:** an announced reminder joins the conversation, so "again in ten minutes" works.
+- **Full mode** lists them with the Reminders button or `Ctrl+R`.
+- **Storage:** `%APPDATA%\Sohi
+eminders.json`, plain text, written through a temporary file. A file that cannot be read
+  is moved aside to `reminders.bad.json`, never overwritten. Reminder texts are not logged.
+- **Clock:** local wall-clock time ("at 9" means 9 on the clock). One timer, armed only while there are reminders, at most
+  10 minutes long, so a changed clock is noticed. No reminders, no timer.
+- **Config:** `[reminders] speak = true`.
 
 ---
 
@@ -648,6 +680,7 @@ Each phase is broken into tasks. The task list and the commit for each task are 
 | **P7** | Tools & safety | Tool registry + JSON schemas for Mistral/Anthropic/Ollama, executors (launch_app index, open_url, clipboard, media, volume), policy engine + confirmation UI (keyboard + voice yes/no), `shell` feature (off by default), tool-call round trip in the orchestrator. |
 | **P8** | Hardening & release | Full budget pass and fixes, soak test (8 h parked + 60 injected turns), device hot-plug, Explorer restart, DPI/monitor changes, "Start with Windows" (`HKCU\...\Run`), portable zip via `xtask release`, README with setup and key instructions. |
 | **P9** | Full mode | Full-screen chat with Markdown and code (§4.9), the cape take-over and its way back, voice, typed and tray commands. Version 1.1.0. |
+| **P10** | Memory + reminders | Longer history in full mode (§5.5), reminders (§5.10). Version 1.2.0. |
 
 ---
 
@@ -747,6 +780,12 @@ Every phase also requires:
 - [ ] After leaving, the idle budgets of §6 hold: ≤ 20 MB private, idle CPU ≤ 60 ms per minute.
 - [ ] While open: ≤ 60 MB private. Animation frames ≤ 16 ms p95 at 1920 × 1200 (the 4 ms handler limit and the 1 ms frame
   limit of §6 are for the widget).
+
+### P10
+- [ ] In full mode Sohi still knows code written 15 000 tokens ago; spoken turns outside it start as fast as before.
+- [ ] Reminders are set, listed and cancelled by voice and typing, online and offline, and survive a restart.
+- [ ] A due reminder is shown, spoken and sent as a toast; never during a turn, never while nobody is there, never twice.
+- [ ] The mic does not open by itself after one. Without reminders there is no timer and the idle budgets of §6 hold.
 
 ---
 
@@ -975,6 +1014,14 @@ minimum granularity, not a cap.
 5. `feat(win): overlay and full-screen chat windows`
 6. `feat(app): full mode`
 7. `perf(p9): full mode report`
+
+**P10 — Memory + reminders → `v1.2.0`**
+1. `docs(spec): add longer memory and reminders`
+2. `feat(core): remember more in full mode`
+3. `feat(core): reminders`
+4. `feat(tools): reminder tools`
+5. `feat(app): announce reminders`
+6. `perf(p10): memory and reminders report`
 
 ---
 

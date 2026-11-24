@@ -151,7 +151,7 @@ const BUTTON_GAP_DIP: u32 = 10;
 const INPUT_DIP: u32 = 104;
 const INPUT_PAD_DIP: u32 = 12;
 /// How many buttons the header has.
-pub const BUTTONS: usize = 4;
+pub const BUTTONS: usize = 5;
 
 /// Where everything in the window goes, in client pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -162,7 +162,7 @@ pub struct Layout {
     pub title: RectPx,
     /// What Sohi is doing.
     pub status: RectPx,
-    /// Talk, Copy code, New chat, Exit.
+    /// Talk, Copy code, Reminders, New chat, Exit.
     pub buttons: [RectPx; BUTTONS],
     /// The line under the header.
     pub separator: RectPx,

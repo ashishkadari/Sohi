@@ -51,7 +51,7 @@ pub use apptimer::{AppTimer, TimerHost};
 pub use autostart::{set_starts_with_windows, starts_with_windows};
 pub use capture::Capture;
 pub use clipboard::{clipboard_text, set_clipboard_text};
-pub use clock::local_time;
+pub use clock::{local_stamp, local_time};
 pub use console::Prompt;
 pub use credential::{delete_key, read_key, write_key};
 pub use cursor::{CursorPoller, cursor_pos, mouse_button_down};

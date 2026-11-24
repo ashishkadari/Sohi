@@ -8,6 +8,7 @@ use std::time::Duration;
 use sohi_core::chat::Role;
 use sohi_core::connectivity::State as Net;
 use sohi_core::full::{Command, command};
+use sohi_core::history::Reach;
 use sohi_core::interaction::{Effect, Event, State};
 use sohi_win::FullEvent;
 
@@ -126,6 +127,8 @@ impl TextMode {
             FullEvent::Talk => self.wake(true, head),
             FullEvent::Escape | FullEvent::Exit => self.leave_full(head),
             FullEvent::CopyCode => self.copy_code(),
+            FullEvent::Reminders if !busy => self.list_reminders(),
+            FullEvent::Reminders => {}
             FullEvent::NewChat => {
                 if busy {
                     self.event(Event::Escape, head);
@@ -195,7 +198,7 @@ impl TextMode {
             return Some(effect);
         };
         match effect {
-            Effect::SetBubble(text) => full.begin(&text),
+            Effect::SetBubble(text) | Effect::AddNotice(text) => full.begin(&text),
             Effect::AppendBubble(text) => full.stream(&text),
             Effect::Reveal(_)
             | Effect::Keep(_)
@@ -251,7 +254,7 @@ impl TextMode {
             return;
         };
         full.start_over();
-        for message in self.history.messages() {
+        for message in self.history.messages(Reach::Long) {
             match message.role {
                 Role::User => full.begin(&format!("› {}", message.content)),
                 Role::Assistant if !message.content.is_empty() => full.stream(&message.content),

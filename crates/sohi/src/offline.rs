@@ -6,6 +6,7 @@ use std::time::Instant;
 use sohi_core::chat::without_calls;
 use sohi_core::intent::{self, Intent, Media, Volume};
 use sohi_core::persona::LocalTime;
+use sohi_core::reminder::{Phrase, Repeat};
 use sohi_providers::{ChatRequest, HttpClient, Ollama, ProviderError, ollama};
 use sohi_tools::{Call, MediaAction, VolumeAction};
 
@@ -111,6 +112,13 @@ impl From<Intent> for Command {
             Intent::Mute => media(MediaAction::Mute),
             Intent::Volume(Volume::Up) => volume(VolumeAction::Up),
             Intent::Volume(Volume::Down) => volume(VolumeAction::Down),
+            Intent::Reminder(Phrase::Set(text, when)) => Self::Tool(Call::ReminderSet {
+                text,
+                when,
+                repeat: Repeat::Once,
+            }),
+            Intent::Reminder(Phrase::List) => Self::Tool(Call::ReminderList),
+            Intent::Reminder(Phrase::Cancel(id)) => Self::Tool(Call::ReminderCancel { id }),
             Intent::Volume(Volume::Set(level)) => volume(VolumeAction::Set(level)),
         }
     }
