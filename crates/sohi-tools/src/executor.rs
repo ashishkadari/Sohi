@@ -5,7 +5,7 @@ use std::time::Instant;
 use serde_json::json;
 
 use crate::apps::AppIndex;
-use crate::{Call, Desktop, one_line};
+use crate::{Call, Desktop, one_line, url};
 
 /// What a call did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +79,19 @@ impl<D: Desktop> Executor<D> {
     pub fn run(&mut self, call: &Call) -> Outcome {
         match call {
             Call::LaunchApp { name } => self.launch(name),
+            Call::OpenUrl { url } => self.open_url(url),
             _ => Outcome::failed("not available yet"),
+        }
+    }
+
+    fn open_url(&mut self, text: &str) -> Outcome {
+        let address = match url::validate(text) {
+            Ok(address) => address,
+            Err(why) => return Outcome::failed(format!("Not opened: {why}.")),
+        };
+        match self.desktop.open(&address) {
+            Ok(()) => Outcome::done(format!("Opened {address}")),
+            Err(why) => Outcome::failed(format!("Opening {address} failed: {why}.")),
         }
     }
 
@@ -124,6 +136,20 @@ mod tests {
         assert!(!launch(&mut executor, "cmd.exe /c calc").ok);
         assert!(!launch(&mut executor, r"\\evil\share\x.exe").ok);
         assert_eq!(executor.desktop.did, ["list apps", "open notepad.lnk"]);
+    }
+
+    #[test]
+    fn opens_only_web_addresses() {
+        let mut executor = Executor::new(FakeDesktop::new());
+        let mut open = |url: &str| {
+            let url = url.to_owned();
+            executor.run(&Call::OpenUrl { url }).ok
+        };
+        assert!(open("github.com"));
+        assert!(!open("file:///C:/x.exe"));
+        assert!(!open("javascript:alert(1)"));
+        assert!(!open(r"\\server\share\x.exe"));
+        assert_eq!(executor.desktop.did, ["open https://github.com"]);
     }
 
     #[test]

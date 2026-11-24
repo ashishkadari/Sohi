@@ -9,6 +9,7 @@ mod executor;
 #[cfg(test)]
 mod fake;
 mod registry;
+pub mod url;
 
 pub use call::{Call, CallError, MediaAction, VolumeAction, one_line};
 pub use desktop::{Desktop, WinDesktop};

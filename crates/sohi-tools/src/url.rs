@@ -20,7 +20,8 @@ pub fn validate(text: &str) -> Result<String, &'static str> {
     // Anything else must be percent-encoded in an address, and these
     // characters could mean something to the shell or the browser's
     // command line.
-    let odd = |c: char| !c.is_ascii_graphic() || matches!(c, '"' | '\\' | '<' | '>' | '^' | '`' | '|');
+    let odd =
+        |c: char| !c.is_ascii_graphic() || matches!(c, '"' | '\\' | '<' | '>' | '^' | '`' | '|');
     if text.contains(odd) {
         return Err("the address has characters an address cannot have");
     }
@@ -62,7 +63,9 @@ fn check_authority(authority: &str, with_scheme: bool) -> Result<(), &'static st
         !label.is_empty()
             && !label.starts_with('-')
             && !label.ends_with('-')
-            && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
     };
     if !labels.iter().all(good) {
         return Err("only http and https addresses can be opened");
@@ -87,7 +90,10 @@ mod tests {
             ("https://example.com:8443/x", "https://example.com:8443/x"),
             ("http://localhost:3000", "http://localhost:3000"),
             ("https://127.0.0.1/", "https://127.0.0.1/"),
-            ("https://xn--bcher-kva.example", "https://xn--bcher-kva.example"),
+            (
+                "https://xn--bcher-kva.example",
+                "https://xn--bcher-kva.example",
+            ),
             (
                 "https://en.wikipedia.org/wiki/Rust_(language)",
                 "https://en.wikipedia.org/wiki/Rust_(language)",
