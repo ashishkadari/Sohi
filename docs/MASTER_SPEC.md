@@ -387,6 +387,12 @@ The `State` struct has three independent regions:
 > **Esc.** While a voice turn runs no Sohi window has the keyboard, so plain Esc is registered as a global hotkey
 > for exactly that long. Other apps do not receive Esc meanwhile.
 
+> SPEC CHANGE (2026-11-24): **speaking.** Thinking goes to Speaking when speech starts to play, not at the first complete
+> sentence. A voice turn ends with PlaybackDone (after LlmDone), then follow-up listening; without follow-up it ends
+> in TextEntry under the 2.5 s reply-done rule. A click on the head barges in on a voice turn only; during a typed
+> turn it focuses the pill. Text submitted while speaking cancels the speech. If online speech fails, the offline
+> voice says that sentence (unless part of it was heard) and the rest of the turn.
+
 ### 5.3 Connectivity transitions
 ~~~
                  request fails (DNS/connect/TLS/timeout)  or  NLM hint = no internet
