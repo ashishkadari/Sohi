@@ -14,6 +14,7 @@ mod logger;
 mod perf;
 mod runtime;
 mod set_key;
+mod speak;
 mod stt;
 mod text_mode;
 mod tray_menu;
@@ -124,6 +125,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         llm_fallback_model: config.llm.anthropic_fallback().to_owned(),
         user_name: config.persona.user_name.clone(),
         stt: config.stt.clone(),
+        tts: config.tts.clone(),
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {

@@ -387,6 +387,12 @@ The `State` struct has three independent regions:
 > **Esc.** While a voice turn runs no Sohi window has the keyboard, so plain Esc is registered as a global hotkey
 > for exactly that long. Other apps do not receive Esc meanwhile.
 
+> SPEC CHANGE (2026-11-24): **speaking.** Thinking goes to Speaking when speech starts to play, not at the first complete
+> sentence. A voice turn ends with PlaybackDone (after LlmDone), then follow-up listening; without follow-up it ends
+> in TextEntry under the 2.5 s reply-done rule. A click on the head barges in on a voice turn only; during a typed
+> turn it focuses the pill. Text submitted while speaking cancels the speech. If online speech fails, the offline
+> voice says that sentence (unless part of it was heard) and the rest of the turn.
+
 ### 5.3 Connectivity transitions
 ~~~
                  request fails (DNS/connect/TLS/timeout)  or  NLM hint = no internet
@@ -468,6 +474,9 @@ async fn run_turn(input: TurnInput, cancel: CancelToken, ctx: &Ctx) -> Result<()
 - **TTS:** prefer a provider output format of raw PCM/WAV streaming (no decoder needed). If only MP3/Opus is available, add a
   minimal decoder behind a cargo feature and record its size cost. The render thread uses WASAPI shared mode with
   `AUTOCONVERTPCM` at the provider's sample rate. The output envelope (RMS of each 20 ms block) drives the visor.
+  > SPEC CHANGE (2026-11-23): the output opens when a voice turn's reply is requested, not on the first PCM. Opening
+  > (`IAudioClient::Initialize`) takes about 300 ms, so this hides it behind the wait for the model. It plays silence
+  > until speech arrives and still closes as soon as the last sentence was heard.
   Offline/OneCore: `SpeechSynthesizer.SynthesizeTextToStreamAsync` → WAV → same render path.
 - **Half-duplex:** the mic is always closed while speaking. That removes echo/AEC complexity. Barge-in uses the hotkey or a click.
 - **Cancellation:** every turn has one `CancelToken` (a `tokio::sync::watch` wrapper). `CancelTurn` aborts in-flight HTTP
@@ -501,6 +510,8 @@ never as instructions, and the system prompt says so.
             fallback_provider = "anthropic"   anthropic_model = ""   offline_model = ""   # e.g. a small Ollama model
 [stt]       provider = "mistral"   model = "voxtral-mini-latest"   language = "auto"
 [tts]       provider = "mistral"   voice = ""   offline_voice = "system-default"
+> SPEC CHANGE (2026-11-23): `offline_voice` defaults to "Microsoft Zira" (the en-US female OneCore voice, as the persona asks); a name that
+> is not installed, or "system-default", uses the Windows default, which is usually a male voice. `voice = ""` is "Sheila" (`voice_478`).
 [persona]   user_name = "Ashish"
 [text]      speak_replies = false
 [tools]     confirm = ["clipboard_get"]   disabled = []
@@ -884,6 +895,11 @@ minimum granularity, not a cap.
    for the account and transcribes the five P4 fixtures with 0/39 word errors in 215–393 ms; `voxtral-mini-transcribe-3`
    scores the same. A WAV upload works; size limits not yet measured.)*
 2. Mistral TTS availability, endpoint, voice IDs, streaming support and output formats (PCM preferred). If unavailable, pick and document an alternative cloud TTS.
+   *(Verified 2026-11-23 live: `POST /v1/audio/speech`, Bearer auth, JSON `model`, `input`, `voice_id`,
+   `response_format`, `stream`. A voice is required (400 without). `stream: true` answers with server-sent events:
+   `speech.audio.delta` with base64 `audio_data`, then `speech.audio.done`. `pcm` is float32 LE, 24 kHz mono. Model
+   `voxtral-mini-tts-3`; first audio about 0.4 s. `GET /v1/audio/voices` lists the voices. US-English female:
+   Sheila `voice_478`, Margaret `voice_447`, and Jane `gb_jane_*` in several moods, tagged `en_us` but with a `gb_` id.)*
 3. Mistral function-calling schema and streaming tool-call delta format.
 4. Anthropic Messages API current model IDs and streaming event types for tool use. *(Text streaming verified 2026-11-22:
    `POST /v1/messages`, `x-api-key`, `anthropic-version: 2026-10-21` (no `temperature`/`top_p`/`top_k` on that version),

@@ -8,7 +8,7 @@
 use std::time::Instant;
 
 use sohi_core::chat::Message;
-use sohi_core::config::SttConfig;
+use sohi_core::config::{SttConfig, TtsConfig};
 use sohi_core::secret::{KeyName, Secret};
 use sohi_providers::retry::{jitter_seed, retry_delay, retry_once};
 use sohi_providers::{
@@ -26,7 +26,7 @@ pub enum Request {
     Chat(ChatTurn),
     /// Start a voice turn: listen, transcribe, then answer like a text
     /// turn. Replaces a running turn the same way.
-    Listen(ListenTurn),
+    Listen(Box<ListenTurn>),
     /// Cancel `turn` if it is the one running. `at` is when the user asked,
     /// for the latency log.
     Cancel {
@@ -60,12 +60,15 @@ pub struct ListenTurn {
     pub chat: ChatTurn,
     /// `[stt]` settings.
     pub stt: SttConfig,
+    /// `[tts]` settings.
+    pub tts: TtsConfig,
 }
 
 /// Runtime → UI.
 #[derive(Debug)]
 pub enum Update {
-    /// The mic level (RMS, 0 to 1), about 30 times a second.
+    /// The level of the mic, or of Sohi's own speech (RMS, 0 to 1), about
+    /// 30 to 60 times a second.
     Level {
         /// The turn.
         turn: u64,
@@ -114,6 +117,17 @@ pub enum Update {
         /// The whole reply, for the history.
         reply: String,
     },
+    /// The reply to a voice turn is being heard; its level follows as
+    /// [`Update::Level`].
+    SpeakingStarted {
+        /// The turn.
+        turn: u64,
+    },
+    /// A voice turn's reply was heard to the end. Comes after `Done`.
+    PlaybackDone {
+        /// The turn.
+        turn: u64,
+    },
     /// The turn failed.
     Failed {
         /// The turn.
@@ -127,7 +141,7 @@ pub enum Update {
 #[derive(Debug)]
 enum Job {
     Chat(ChatTurn),
-    Listen(ListenTurn),
+    Listen(Box<ListenTurn>),
 }
 
 impl Job {
@@ -181,7 +195,7 @@ impl TurnRunner for ProviderRunner {
                     }
                 }
             }
-            Job::Listen(listen) => crate::voice::run(self, listen, ui).await,
+            Job::Listen(listen) => crate::voice::run(self, *listen, ui).await,
         }
     }
 }
@@ -274,7 +288,13 @@ async fn run_cancellable(
 /// Streams the reply to `turn` and reports how it ended.
 pub async fn answer(http: &HttpClient, turn: &ChatTurn, ui: &UiLink<Update>) {
     let id = turn.turn;
-    match chat(http, turn, ui).await {
+    let on_text = |delta: &str| {
+        ui.send(Update::Delta {
+            turn: id,
+            text: delta.to_owned(),
+        });
+    };
+    match chat(http, turn, &on_text).await {
         Ok(reply) => {
             ui.send(Update::Done { turn: id, reply });
         }
@@ -288,13 +308,22 @@ pub async fn answer(http: &HttpClient, turn: &ChatTurn, ui: &UiLink<Update>) {
 /// Asks Mistral, then the fallback provider if Mistral failed before
 /// writing anything (spec §2.3). A reply already under way is never
 /// restarted elsewhere: the user would see it twice.
-async fn chat(
+/// Calls `on_text` with each piece; returns the whole reply.
+pub async fn chat(
     http: &HttpClient,
     turn: &ChatTurn,
-    ui: &UiLink<Update>,
+    on_text: &dyn Fn(&str),
 ) -> Result<String, ProviderError> {
     let mut reply = String::new();
-    let primary = attempt(Provider::Mistral, http, &turn.model, turn, ui, &mut reply).await;
+    let primary = attempt(
+        Provider::Mistral,
+        http,
+        &turn.model,
+        turn,
+        on_text,
+        &mut reply,
+    )
+    .await;
     let error = match primary {
         Ok(()) => return Ok(reply),
         Err(error) => error,
@@ -311,7 +340,7 @@ async fn chat(
         http,
         &turn.fallback_model,
         turn,
-        ui,
+        on_text,
         &mut reply,
     )
     .await
@@ -345,7 +374,7 @@ async fn attempt(
     http: &HttpClient,
     model: &str,
     turn: &ChatTurn,
-    ui: &UiLink<Update>,
+    on_text: &dyn Fn(&str),
     reply: &mut String,
 ) -> Result<(), ProviderError> {
     let delay = retry_delay(jitter_seed());
@@ -357,18 +386,18 @@ async fn attempt(
         );
     };
     retry_once(reply, delay, on_retry, async |reply: &mut String| {
-        stream(provider, http, model, turn, ui, reply).await
+        stream(provider, http, model, turn, on_text, reply).await
     })
     .await
 }
 
-/// Streams one attempt into `reply`, forwarding each piece to the UI.
+/// Streams one attempt into `reply`, forwarding each piece.
 async fn stream(
     provider: Provider,
     http: &HttpClient,
     model: &str,
     turn: &ChatTurn,
-    ui: &UiLink<Update>,
+    on_text: &dyn Fn(&str),
     reply: &mut String,
 ) -> Result<(), ProviderError> {
     let key = read_key(provider.key())?;
@@ -392,10 +421,7 @@ async fn stream(
             );
         }
         reply.push_str(delta);
-        ui.send(Update::Delta {
-            turn: turn.turn,
-            text: delta.to_owned(),
-        });
+        on_text(delta);
     };
     match provider {
         Provider::Mistral => {

@@ -65,6 +65,25 @@ pub enum WavError {
 /// # Errors
 /// Returns [`WavError`] for anything else.
 pub fn decode(bytes: &[u8]) -> Result<Vec<i16>, WavError> {
+    let (rate, samples) = decode_any_rate(bytes)?;
+    if rate == SAMPLE_RATE {
+        Ok(samples)
+    } else {
+        Err(WavError::Unsupported {
+            format: 1,
+            channels: 1,
+            rate,
+            bits: 16,
+        })
+    }
+}
+
+/// Reads a mono 16-bit PCM WAV of any sample rate; returns the rate and
+/// the samples.
+///
+/// # Errors
+/// Returns [`WavError`] if it is not a WAV or in another format.
+pub fn decode_any_rate(bytes: &[u8]) -> Result<(u32, Vec<i16>), WavError> {
     if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
         return Err(WavError::NotWav);
     }
@@ -77,8 +96,8 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<i16>, WavError> {
         match id {
             b"fmt " => format = Some(parse_format(body)?),
             b"data" => {
-                if format != Some((1, 1, SAMPLE_RATE, 16)) {
-                    let (format, channels, rate, bits) = format.ok_or(WavError::NotWav)?;
+                let (format, channels, rate, bits) = format.ok_or(WavError::NotWav)?;
+                if (format, channels, bits) != (1, 1, 16) {
                     return Err(WavError::Unsupported {
                         format,
                         channels,
@@ -87,7 +106,8 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<i16>, WavError> {
                     });
                 }
                 let (pairs, _) = body.as_chunks::<2>();
-                return Ok(pairs.iter().map(|&b| i16::from_le_bytes(b)).collect());
+                let samples = pairs.iter().map(|&b| i16::from_le_bytes(b)).collect();
+                return Ok((rate, samples));
             }
             _ => {}
         }

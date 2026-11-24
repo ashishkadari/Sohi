@@ -7,11 +7,11 @@
 
 use std::time::{Duration, Instant};
 
-use sohi_core::config::SttConfig;
+use sohi_core::config::{SttConfig, TtsConfig};
 use sohi_core::geometry::{BASE_DPI, RectPx};
 use sohi_core::history::History;
 use sohi_core::interaction::{ERROR_HOLD, Effect, Event, Interaction, State};
-use sohi_core::persona::{SPOKEN_NOTE, text_system_prompt};
+use sohi_core::persona::{Channel, system_prompt};
 use sohi_core::pill::pill_origin;
 use sohi_core::visibility::{Input, Phase};
 use sohi_win::{
@@ -42,6 +42,8 @@ pub struct TextSettings {
     pub user_name: String,
     /// `[stt]`.
     pub stt: SttConfig,
+    /// `[tts]`.
+    pub tts: TtsConfig,
     /// `[wake] follow_up`.
     pub follow_up: bool,
 }
@@ -181,6 +183,8 @@ impl TextMode {
                     }
                     Event::LlmDone { turn }
                 }
+                Update::SpeakingStarted { turn } => Event::SpeakingStarted { turn },
+                Update::PlaybackDone { turn } => Event::PlaybackDone { turn },
                 Update::Failed { turn, error } => {
                     if self.is_current(turn) {
                         self.history.drop_pending();
@@ -311,7 +315,7 @@ impl TextMode {
     /// Hands the turn to the runtime thread, or returns its failure.
     fn start_turn(&mut self, turn: u64, text: String) -> Option<Event> {
         self.history.push_user(text);
-        let request = Request::Chat(self.chat_turn(turn));
+        let request = Request::Chat(self.chat_turn(Channel::Typed, turn));
         let sent = self.runtime().map(|r| r.send(request));
         if matches!(sent, Some(Ok(()))) {
             return None;
@@ -327,12 +331,11 @@ impl TextMode {
     /// Hands a voice turn to the runtime thread, or returns its failure.
     /// The transcript joins the history when it arrives.
     fn start_listening(&mut self, turn: u64) -> Option<Event> {
-        let mut chat = self.chat_turn(turn);
-        chat.system.push_str(SPOKEN_NOTE);
-        let request = Request::Listen(ListenTurn {
-            chat,
+        let request = Request::Listen(Box::new(ListenTurn {
+            chat: self.chat_turn(Channel::Spoken, turn),
             stt: self.settings.stt.clone(),
-        });
+            tts: self.settings.tts.clone(),
+        }));
         let sent = self.runtime().map(|r| r.send(request));
         if matches!(sent, Some(Ok(()))) {
             return None;
@@ -345,12 +348,12 @@ impl TextMode {
     }
 
     /// A chat turn over the history as it stands.
-    fn chat_turn(&self, turn: u64) -> ChatTurn {
+    fn chat_turn(&self, channel: Channel, turn: u64) -> ChatTurn {
         ChatTurn {
             turn,
             model: self.settings.model.clone(),
             fallback_model: self.settings.fallback_model.clone(),
-            system: text_system_prompt(&self.settings.user_name, &sohi_win::local_time()),
+            system: system_prompt(channel, &self.settings.user_name, &sohi_win::local_time()),
             messages: self.history.messages(),
         }
     }

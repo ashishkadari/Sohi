@@ -35,7 +35,7 @@ language = "auto"
 [tts]
 provider = "mistral"
 voice = ""                       # empty uses the provider's default voice
-offline_voice = "system-default" # a Windows OneCore voice name
+offline_voice = "Microsoft Zira" # a Windows OneCore voice name
 
 [persona]
 user_name = "Ashish"   # what Sohi calls you; empty for no name

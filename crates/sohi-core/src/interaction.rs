@@ -1,6 +1,5 @@
 //! The Interaction region of the state machine (spec §5.2): text turns,
-//! and voice turns up to the reply. Speaking arrives with TTS in P5; until
-//! then a voice turn's reply shows in the pill like a text reply.
+//! and voice turns, whose replies are spoken as well as shown.
 //!
 //! Pure: events in, effects out. The app carries the effects out on the
 //! head, the pill and the runtime thread.
@@ -38,6 +37,12 @@ pub enum State {
     /// transcript).
     Thinking {
         /// The running turn.
+        turn: u64,
+    },
+    /// The reply to a voice turn is being spoken (and may still be
+    /// arriving). The mic is closed.
+    Speaking {
+        /// The voice turn.
         turn: u64,
     },
     /// A turn failed; the message shows for [`ERROR_HOLD`].
@@ -96,6 +101,17 @@ pub enum Event {
     /// A reply finished.
     LlmDone {
         /// The turn.
+        turn: u64,
+    },
+    /// The reply to a voice turn is being heard.
+    SpeakingStarted {
+        /// The voice turn.
+        turn: u64,
+    },
+    /// All of a voice turn's reply arrived and was heard (or there was
+    /// nothing to hear). Comes after its [`Event::LlmDone`].
+    PlaybackDone {
+        /// The voice turn.
         turn: u64,
     },
     /// A turn failed; `message` is for the user.
@@ -225,17 +241,18 @@ impl Interaction {
     #[must_use]
     pub fn current_turn(&self) -> Option<u64> {
         match self.state {
-            State::Listening { turn } | State::Transcribing { turn } | State::Thinking { turn } => {
-                Some(turn)
-            }
-            _ => None,
+            State::Listening { turn }
+            | State::Transcribing { turn }
+            | State::Thinking { turn }
+            | State::Speaking { turn } => Some(turn),
+            State::Idle | State::TextEntry | State::Error => None,
         }
     }
 
     /// Feeds one event and returns the effects, in order.
     pub fn step(&mut self, event: Event) -> Vec<Effect> {
-        use State::{Error, Idle, Listening, TextEntry, Thinking, Transcribing};
-        if let Some(effects) = self.voice_step(&event) {
+        use State::{Error, Idle, Listening, Speaking, TextEntry, Thinking, Transcribing};
+        if let Some(effects) = self.voice_step(&event).or_else(|| self.speech_step(&event)) {
             return effects;
         }
         match (self.state, event) {
@@ -246,17 +263,12 @@ impl Interaction {
                 vec![Effect::ShowPill { focus: true }]
             }
             (TextEntry, Event::TextSubmitted(text)) => self.submit(&text),
-            (Thinking { turn }, Event::LlmDelta { turn: t, text }) if t == turn => {
+            (Thinking { turn } | Speaking { turn }, Event::LlmDelta { turn: t, text })
+                if t == turn =>
+            {
                 vec![Effect::AppendBubble(text)]
             }
             (Thinking { turn }, Event::LlmDone { turn: t }) if t == turn => {
-                if self.follow_up
-                    && self.source != Source::Typed
-                    && !self.focused
-                    && !self.has_input
-                {
-                    return self.listen_again();
-                }
                 self.state = TextEntry;
                 vec![
                     Effect::SetVisual(VisualState::Idle),
@@ -271,7 +283,9 @@ impl Interaction {
                 effects.extend(self.fail(message));
                 effects
             }
-            (Thinking { turn }, Event::TurnFailed { turn: t, message }) if t == turn => {
+            (Thinking { turn } | Speaking { turn }, Event::TurnFailed { turn: t, message })
+                if t == turn =>
+            {
                 self.fail(message)
             }
             (Error, Event::ErrorShown) => {
@@ -295,16 +309,20 @@ impl Interaction {
 
     /// The voice transitions, or `None` for an event they do not cover.
     fn voice_step(&mut self, event: &Event) -> Option<Vec<Effect>> {
-        use State::{Error, Idle, Listening, TextEntry, Thinking, Transcribing};
+        use State::{Error, Idle, Listening, Speaking, TextEntry, Thinking, Transcribing};
         Some(match (self.state, event) {
             (Idle, Event::VoiceWake) => self.listen(),
             // The hotkey again stops listening.
             (Listening { .. }, Event::VoiceWake) => self.close(true),
             // Barge-in: drop whatever is going on and listen again.
-            (TextEntry | Transcribing { .. } | Thinking { .. } | Error, Event::VoiceWake) => {
-                let mut effects = self.close(false);
-                effects.extend(self.listen());
-                effects
+            (
+                TextEntry | Transcribing { .. } | Thinking { .. } | Speaking { .. } | Error,
+                Event::VoiceWake,
+            ) => self.barge_in(),
+            (Transcribing { .. } | Thinking { .. } | Speaking { .. }, Event::HeadClicked)
+                if self.source != Source::Typed =>
+            {
+                self.barge_in()
             }
             (Listening { turn }, Event::SpeechStarted { turn: t }) if turn == *t => {
                 vec![Effect::Keep(RetractRule::Working)]
@@ -344,6 +362,61 @@ impl Interaction {
             }
             _ => return None,
         })
+    }
+
+    /// The transitions around a spoken reply, or `None` for an event they
+    /// do not cover.
+    fn speech_step(&mut self, event: &Event) -> Option<Vec<Effect>> {
+        use State::{Speaking, Thinking};
+        Some(match (self.state, event) {
+            (Thinking { turn }, Event::SpeakingStarted { turn: t }) if turn == *t => {
+                self.state = Speaking { turn };
+                vec![Effect::SetVisual(VisualState::Speaking)]
+            }
+            // A voice turn lasts until its reply was heard.
+            (Thinking { turn }, Event::LlmDone { turn: t })
+                if turn == *t && self.source != Source::Typed =>
+            {
+                Vec::new()
+            }
+            (Thinking { turn } | Speaking { turn }, Event::PlaybackDone { turn: t })
+                if turn == *t =>
+            {
+                self.spoken()
+            }
+            // Typing over the reply replaces it.
+            (Speaking { turn }, Event::TextSubmitted(text)) if !text.trim().is_empty() => {
+                let mut effects = vec![Effect::CancelTurn { turn }];
+                effects.extend(self.submit(text));
+                effects
+            }
+            (Speaking { .. }, Event::TextSubmitted(_)) => Vec::new(),
+            _ => return None,
+        })
+    }
+
+    /// A voice turn's reply was heard: listen for a follow-up, unless the
+    /// user is at the pill.
+    fn spoken(&mut self) -> Vec<Effect> {
+        let at_pill = self.focused || self.has_input;
+        if self.follow_up && !at_pill {
+            return self.listen_again();
+        }
+        let heard = matches!(self.state, State::Speaking { .. });
+        self.state = State::TextEntry;
+        let rule = if heard && !at_pill {
+            RetractRule::ReplyDone
+        } else {
+            self.entry_rule()
+        };
+        vec![Effect::SetVisual(VisualState::Idle), Effect::Keep(rule)]
+    }
+
+    /// Drops whatever is going on (including speech) and listens.
+    fn barge_in(&mut self) -> Vec<Effect> {
+        let mut effects = self.close(false);
+        effects.extend(self.listen());
+        effects
     }
 
     fn listen(&mut self) -> Vec<Effect> {

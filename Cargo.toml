@@ -30,6 +30,10 @@ thiserror = { version = "2.0.21", default-features = false, features = ["std"] }
 tokio = { version = "1.54.1", default-features = false, features = ["rt", "net", "time", "sync", "macros", "io-util"] }
 windows = { version = "0.62.2", default-features = false, features = [
     "std",
+    "Foundation_Collections",
+    "Media_Core",
+    "Media_SpeechSynthesis",
+    "Storage_Streams",
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",

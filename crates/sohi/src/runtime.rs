@@ -51,6 +51,13 @@ impl<U> UiLink<U> {
     }
 }
 
+/// A link whose updates come out of the returned receiver.
+#[cfg(test)]
+pub fn test_link<U>(window: RemoteWindow) -> (UiLink<U>, mpsc::Receiver<U>) {
+    let (tx, rx) = mpsc::channel();
+    (UiLink { tx, window }, rx)
+}
+
 /// Why a request did not reach the runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendError {

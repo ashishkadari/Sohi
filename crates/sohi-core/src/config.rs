@@ -217,7 +217,7 @@ impl Default for TtsConfig {
         Self {
             provider: "mistral".to_owned(),
             voice: String::new(),
-            offline_voice: "system-default".to_owned(),
+            offline_voice: "Microsoft Zira".to_owned(),
         }
     }
 }
