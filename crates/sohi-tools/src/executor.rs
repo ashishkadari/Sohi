@@ -5,10 +5,13 @@ use std::time::Instant;
 use serde_json::json;
 
 use crate::apps::AppIndex;
-use crate::{Call, Desktop, one_line, url};
+use crate::{Call, Desktop, MediaAction, VolumeAction, one_line, url};
 
 /// How much of the clipboard a model may see (spec §5.6).
 const CLIPBOARD_BYTES: usize = 8 * 1024;
+
+/// How much louder or quieter one step is, in percent.
+const VOLUME_STEP: u8 = 10;
 
 /// What a call did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,7 +88,8 @@ impl<D: Desktop> Executor<D> {
             Call::OpenUrl { url } => self.open_url(url),
             Call::ClipboardGet => self.clipboard_get(),
             Call::ClipboardSet { text } => self.clipboard_set(text),
-            _ => Outcome::failed("not available yet"),
+            Call::Media(action) => self.media(*action),
+            Call::Volume(action) => self.volume(*action),
         }
     }
 
@@ -104,6 +108,26 @@ impl<D: Desktop> Executor<D> {
         match self.desktop.set_clipboard(text) {
             Ok(()) => Outcome::done("Copied."),
             Err(why) => Outcome::failed(format!("Copying failed: {why}.")),
+        }
+    }
+
+    fn media(&mut self, action: MediaAction) -> Outcome {
+        match self.desktop.press(action) {
+            Ok(()) => Outcome::done("Done."),
+            Err(why) => Outcome::failed(format!("That failed: {why}.")),
+        }
+    }
+
+    fn volume(&mut self, action: VolumeAction) -> Outcome {
+        let target = self.desktop.volume().map(|now| match action {
+            VolumeAction::Up => now.saturating_add(VOLUME_STEP).min(100),
+            VolumeAction::Down => now.saturating_sub(VOLUME_STEP),
+            VolumeAction::Set(level) => level.min(100),
+        });
+        let set = target.and_then(|level| self.desktop.set_volume(level).map(|()| level));
+        match set {
+            Ok(level) => Outcome::done(format!("Volume {level}%.")),
+            Err(why) => Outcome::failed(format!("Changing the volume failed: {why}.")),
         }
     }
 
@@ -189,6 +213,32 @@ mod tests {
             Outcome::done("Copied.")
         );
         assert_eq!(executor.desktop.did, ["read 8192", "read 8192", "copy hi"]);
+    }
+
+    #[test]
+    fn media_and_volume() {
+        let mut executor = Executor::new(FakeDesktop::new());
+        executor.run(&Call::Media(MediaAction::PlayPause));
+        for action in [
+            VolumeAction::Set(95),
+            VolumeAction::Up,
+            VolumeAction::Set(5),
+            VolumeAction::Down,
+            VolumeAction::Set(255),
+        ] {
+            assert!(executor.run(&Call::Volume(action)).ok);
+        }
+        assert_eq!(
+            executor.desktop.did,
+            [
+                "press PlayPause",
+                "volume 95",
+                "volume 100",
+                "volume 5",
+                "volume 0",
+                "volume 100"
+            ]
+        );
     }
 
     #[test]

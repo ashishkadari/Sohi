@@ -35,6 +35,7 @@ mod surface;
 mod theme;
 mod timer;
 mod tray;
+mod volume;
 mod window;
 
 pub use apps::{app_paths, apps_folder};
@@ -61,4 +62,5 @@ pub use speech::synthesize_offline;
 pub use theme::{animations_enabled, force_dark_menus};
 pub use timer::{FRAME_30_FPS, FRAME_60_FPS, FrameTimer};
 pub use tray::{MenuItem, TrayIcon};
+pub use volume::{MediaKey, press_media_key, set_volume, volume};
 pub use window::{AppWindow, RemoteWindow};

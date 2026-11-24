@@ -1,11 +1,12 @@
 //! A desktop that only notes what was done to it.
 
-use crate::Desktop;
 use crate::apps::App;
+use crate::{Desktop, MediaAction};
 
 pub(crate) struct FakeDesktop {
     pub did: Vec<String>,
     pub clipboard: Option<String>,
+    pub volume: u8,
 }
 
 impl FakeDesktop {
@@ -13,6 +14,7 @@ impl FakeDesktop {
         Self {
             did: Vec::new(),
             clipboard: None,
+            volume: 50,
         }
     }
 }
@@ -39,6 +41,21 @@ impl Desktop for FakeDesktop {
 
     fn set_clipboard(&mut self, text: &str) -> Result<(), String> {
         self.did.push(format!("copy {text}"));
+        Ok(())
+    }
+
+    fn press(&mut self, key: MediaAction) -> Result<(), String> {
+        self.did.push(format!("press {key:?}"));
+        Ok(())
+    }
+
+    fn volume(&mut self) -> Result<u8, String> {
+        Ok(self.volume)
+    }
+
+    fn set_volume(&mut self, percent: u8) -> Result<(), String> {
+        self.did.push(format!("volume {percent}"));
+        self.volume = percent;
         Ok(())
     }
 }

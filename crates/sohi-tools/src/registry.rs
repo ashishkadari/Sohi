@@ -74,7 +74,7 @@ impl Tool {
                 r#"{"type":"object","properties":{"action":{"type":"string","enum":["play_pause","next","prev","mute"]}},"required":["action"]}"#,
             ),
             Self::Volume => (
-                "Change the PC's volume: one step up or down, or set it to a level.",
+                "Change the PC's volume: one step up or down, or set it to a level. One step is 10 percent.",
                 r#"{"type":"object","properties":{"action":{"type":"string","enum":["up","down","set"]},"level":{"type":"integer","minimum":0,"maximum":100,"description":"Percent; only for set"}},"required":["action"]}"#,
             ),
         };

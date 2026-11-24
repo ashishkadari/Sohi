@@ -2,6 +2,9 @@
 
 use std::path::Path;
 
+use sohi_win::{MediaKey, WinError};
+
+use crate::MediaAction;
 use crate::apps::{App, start_menu};
 
 /// The PC the tools act on. Errors are short texts for the model and the
@@ -28,6 +31,24 @@ pub trait Desktop: Send {
     /// # Errors
     /// Returns why it could not be written.
     fn set_clipboard(&mut self, text: &str) -> Result<(), String>;
+
+    /// Presses a media key.
+    ///
+    /// # Errors
+    /// Returns why it could not be pressed.
+    fn press(&mut self, key: MediaAction) -> Result<(), String>;
+
+    /// The volume in percent.
+    ///
+    /// # Errors
+    /// Returns why it is not known.
+    fn volume(&mut self) -> Result<u8, String>;
+
+    /// Sets the volume in percent.
+    ///
+    /// # Errors
+    /// Returns why it could not be set.
+    fn set_volume(&mut self, percent: u8) -> Result<(), String>;
 }
 
 /// This PC.
@@ -73,4 +94,30 @@ impl Desktop for WinDesktop {
             "the clipboard is in use".to_owned()
         })
     }
+
+    fn press(&mut self, key: MediaAction) -> Result<(), String> {
+        let key = match key {
+            MediaAction::PlayPause => MediaKey::PlayPause,
+            MediaAction::Next => MediaKey::Next,
+            MediaAction::Previous => MediaKey::Previous,
+            MediaAction::Mute => MediaKey::Mute,
+        };
+        sohi_win::press_media_key(key).map_err(|err| {
+            log::warn!("cannot press a media key: {err}");
+            "Windows refused the key".to_owned()
+        })
+    }
+
+    fn volume(&mut self) -> Result<u8, String> {
+        sohi_win::volume().map_err(|err| no_speakers(&err))
+    }
+
+    fn set_volume(&mut self, percent: u8) -> Result<(), String> {
+        sohi_win::set_volume(percent).map_err(|err| no_speakers(&err))
+    }
+}
+
+fn no_speakers(err: &WinError) -> String {
+    log::warn!("cannot use the volume: {err}");
+    "there are no speakers to control".to_owned()
 }
