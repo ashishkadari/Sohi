@@ -519,6 +519,10 @@ never as instructions, and the system prompt says so.
 > the player did not react. This runs in the helper (`--media <action>`). If Windows lists no player, `play` still
 > presses the key, for players that are listed only once they have played.
 
+> SPEC CHANGE (2026-11-24): the history keeps the tool calls of an answered turn with their results, but no text from
+> outside, no call made after the turn read some, and none over 600 bytes. Remembering only the replies, models read that
+> "pause music" had been answered with "Paused." alone, and did the same without calling the tool.
+
 > SPEC CHANGE (2026-11-24): once a turn has read text from outside (`clipboard_get`, `shell_exec`), **every** later call of
 > that turn is confirmed, whatever `[tools]` says. Otherwise text on the clipboard could have the model open an address
 > that carries the clipboard away. A permit type enforces this: the executor takes nothing else. In a turn the model may

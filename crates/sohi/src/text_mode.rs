@@ -217,9 +217,9 @@ impl TextMode {
                     message: "Sohi couldn't use the microphone.".to_owned(),
                 },
                 Update::Delta { turn, text } => Event::LlmDelta { turn, text },
-                Update::Done { turn, reply } => {
+                Update::Done { turn, reply, runs } => {
                     if self.is_current(turn) {
-                        self.history.push_reply(reply);
+                        self.history.push_reply(reply, runs);
                     }
                     Event::LlmDone { turn }
                 }

@@ -3,6 +3,7 @@
 
 use std::time::Instant;
 
+use sohi_core::chat::without_calls;
 use sohi_core::intent::{self, Intent, Media, Volume};
 use sohi_core::persona::LocalTime;
 use sohi_providers::{ChatRequest, HttpClient, Ollama, ProviderError, ollama};
@@ -32,7 +33,12 @@ pub async fn answer(
     let mut actions = Actions::new(id, &turn.policy, toolbox, ui, NoEar);
     match generate(http, turn, model, &mut actions, &mut on_delta).await {
         Ok(()) => {
-            ui.send(Update::Done { turn: id, reply });
+            let runs = Vec::new();
+            ui.send(Update::Done {
+                turn: id,
+                reply,
+                runs,
+            });
         }
         Err(error) => {
             log::warn!("turn {id} failed: {error}");
@@ -56,10 +62,11 @@ async fn generate(
     if command.is_none() && !model.is_empty() {
         let ollama = Ollama::new(http.clone(), ollama::BASE_URL);
         if ollama.is_running().await {
+            let messages = without_calls(&turn.messages);
             let request = ChatRequest {
                 model,
                 system: &turn.system,
-                messages: &turn.messages,
+                messages: &messages,
                 tools: &[],
             };
             ollama.chat_stream(&request, on_delta).await?;

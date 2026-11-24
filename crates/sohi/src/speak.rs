@@ -83,7 +83,12 @@ pub async fn answer_aloud(aloud: Aloud<'_>, ui: &UiLink<Update>) {
         let mut actions = Actions::new(id, &turn.policy, aloud.toolbox, ui, ear);
         let reply = chat(http, turn, &mut actions, &on_text).await?;
         flush();
-        ui.send(Update::Done { turn: id, reply });
+        let runs = actions.take_runs();
+        ui.send(Update::Done {
+            turn: id,
+            reply,
+            runs,
+        });
         // Nothing more to say: lets the synthesis end.
         let _ = sentences_tx.send(String::new());
         Ok::<(), ProviderError>(())

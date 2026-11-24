@@ -50,6 +50,26 @@ pub struct ToolCall {
     pub arguments: String,
 }
 
+/// A tool call that was dealt with, as later turns remember it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolRun {
+    /// The call.
+    pub call: ToolCall,
+    /// Its result, without any text from outside.
+    pub result: String,
+}
+
+/// `messages` as a model without tools can take them: without the calls
+/// and their results.
+#[must_use]
+pub fn without_calls(messages: &[Message]) -> Vec<Message> {
+    messages
+        .iter()
+        .filter(|m| m.role != Role::Tool && m.calls.is_empty())
+        .cloned()
+        .collect()
+}
+
 impl Message {
     /// A message from the user.
     #[must_use]

@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use sohi_core::chat::ToolCall;
+use sohi_core::chat::{ToolCall, ToolRun};
 use sohi_tools::{
     Call, Desktop, Executor, Gate, Outcome, Permit, Policy, Question, Verdict, WinDesktop,
 };
@@ -136,6 +136,7 @@ pub struct Actions<'a, E> {
     ear: E,
     asks: u32,
     last: String,
+    runs: Vec<ToolRun>,
     timeout: Duration,
 }
 
@@ -156,8 +157,16 @@ impl<'a, E: Ear> Actions<'a, E> {
             ear,
             asks: 0,
             last: String::new(),
+            runs: Vec::new(),
             timeout: ANSWER_TIMEOUT,
         }
+    }
+
+    /// What was called, for the history. Text from outside is left out, and
+    /// so is every call it could have written: it must not guide a later
+    /// turn.
+    pub fn take_runs(&mut self) -> Vec<ToolRun> {
+        std::mem::take(&mut self.runs)
     }
 
     /// What the latest call did, for the user.
@@ -168,6 +177,7 @@ impl<'a, E: Ear> Actions<'a, E> {
     /// Runs a model's call and returns the result for it. `shown` is the
     /// reply so far.
     pub async fn run(&mut self, call: &ToolCall, shown: &str) -> String {
+        let guided = self.gate.is_tainted();
         let outcome = match Call::parse(&call.name, &call.arguments) {
             Ok(call) => {
                 // Spec §5.6: the address is shown in the bubble.
@@ -188,6 +198,12 @@ impl<'a, E: Ear> Actions<'a, E> {
             }
         };
         self.last.clone_from(&outcome.message);
+        if !guided {
+            self.runs.push(ToolRun {
+                call: call.clone(),
+                result: outcome.without_untrusted().to_json(),
+            });
+        }
         outcome.to_json()
     }
 

@@ -118,6 +118,12 @@ impl Gate<'_> {
         Verdict::Allow(Permit(call))
     }
 
+    /// Whether the turn has seen text from outside.
+    #[must_use]
+    pub fn is_tainted(&self) -> bool {
+        self.tainted
+    }
+
     /// Takes note of what a call returned.
     pub fn saw(&mut self, outcome: &Outcome) {
         self.tainted |= outcome.untrusted.is_some();

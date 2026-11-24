@@ -3,7 +3,7 @@
 
 use std::time::Instant;
 
-use sohi_core::chat::{Message, ToolSpec};
+use sohi_core::chat::{Message, ToolSpec, without_calls};
 use sohi_core::secret::{KeyName, Secret};
 use sohi_providers::retry::{jitter_seed, retry_delay, retry_once};
 use sohi_providers::{
@@ -29,7 +29,12 @@ pub async fn answer(http: &HttpClient, turn: &ChatTurn, toolbox: &Toolbox, ui: &
     let mut actions = Actions::new(id, &turn.policy, toolbox, ui, NoEar);
     match chat(http, turn, &mut actions, &on_text).await {
         Ok(reply) => {
-            ui.send(Update::Done { turn: id, reply });
+            let runs = actions.take_runs();
+            ui.send(Update::Done {
+                turn: id,
+                reply,
+                runs,
+            });
         }
         Err(error) => {
             log::warn!("turn {id} failed: {error}");
@@ -222,6 +227,14 @@ impl Online<'_> {
         let model = match provider {
             Provider::Mistral => &self.turn.model,
             Provider::Anthropic => &self.turn.fallback_model,
+        };
+        // Anthropic refuses calls of tools it is not told about.
+        let plain;
+        let messages = if self.specs.is_empty() {
+            plain = without_calls(messages);
+            &plain
+        } else {
+            messages
         };
         let request = ChatRequest {
             model,

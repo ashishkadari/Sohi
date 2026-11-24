@@ -9,7 +9,7 @@ use std::cell::OnceCell;
 use std::rc::Rc;
 use std::time::Instant;
 
-use sohi_core::chat::Message;
+use sohi_core::chat::{Message, ToolRun};
 use sohi_core::config::{SttConfig, TtsConfig};
 use sohi_providers::{HttpClient, ProviderError};
 use sohi_tools::Policy;
@@ -135,6 +135,8 @@ pub enum Update {
         turn: u64,
         /// The whole reply, for the history.
         reply: String,
+        /// The tools it took, for the history.
+        runs: Vec<ToolRun>,
     },
     /// A tool call needs the user's permission.
     Question {

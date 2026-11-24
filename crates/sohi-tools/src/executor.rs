@@ -54,6 +54,16 @@ impl Outcome {
         Self::failed("denied: the user did not allow this")
     }
 
+    /// The same without the text from outside, for later turns.
+    #[must_use]
+    pub fn without_untrusted(&self) -> Self {
+        Self {
+            ok: self.ok,
+            message: self.message.clone(),
+            untrusted: None,
+        }
+    }
+
     /// The tool result for the model: JSON, so text from outside stays
     /// inside one string whatever it contains.
     #[must_use]
