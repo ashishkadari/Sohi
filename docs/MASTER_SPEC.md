@@ -417,6 +417,12 @@ The `State` struct has three independent regions:
   Otherwise use `sohi-core::intent`, a deterministic grammar: `open <app>`, `go to <url>`, `play|pause|next|previous`,
   `volume <up|down|N>`, `mute`, `copy <text>`, `what time is it`. Unmatched input gets the reply "Offline. I can only run local commands right now."
 
+> SPEC CHANGE (2026-11-24): **connectivity.** Sohi starts Online; the first hint or request finds out otherwise. Ollama
+> is looked for at each offline turn, not only on the transition, so starting it later works. Commands are only
+> understood in P6: the time is answered, the rest says it cannot run commands yet (executors are P7). An offline wake
+> focuses the pill only for the voice hotkey, the tray's Talk and a click on the head. Forced offline is remembered
+> across restarts by an empty `force-offline` file next to the config, and cancels a running turn.
+
 ### 5.4 Audio capture pipeline
 - On `OpenMic`: open WASAPI shared-mode event-driven `IAudioClient` on the default capture endpoint with flags
   `AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUTOCONVERTPCM | SRC_DEFAULT_QUALITY` and format **16 kHz, mono, i16**.
