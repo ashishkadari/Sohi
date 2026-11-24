@@ -5,6 +5,8 @@ use std::time::Instant;
 use serde_json::json;
 
 use crate::apps::AppIndex;
+use sohi_win::MediaResult;
+
 use crate::{Call, Desktop, MediaAction, Permit, VolumeAction, one_line, url};
 
 /// How much of the clipboard a model may see (spec §5.6).
@@ -117,8 +119,14 @@ impl<D: Desktop> Executor<D> {
     }
 
     fn media(&mut self, action: MediaAction) -> Outcome {
-        match self.desktop.press(action) {
-            Ok(()) => Outcome::done("Done."),
+        match self.desktop.media(action) {
+            Ok(MediaResult::Done) => Outcome::done("Done."),
+            Ok(MediaResult::Already) if action == MediaAction::Play => {
+                Outcome::done("Something was playing already.")
+            }
+            Ok(MediaResult::Already) => Outcome::done("Nothing was playing."),
+            Ok(MediaResult::NoPlayer) => Outcome::failed("No music or video player is open."),
+            Ok(MediaResult::Ignored) => Outcome::failed("The player did not react."),
             Err(why) => Outcome::failed(format!("That failed: {why}.")),
         }
     }
@@ -238,7 +246,7 @@ mod tests {
     #[test]
     fn media_and_volume() {
         let mut executor = Executor::new(FakeDesktop::new());
-        executor.execute(&Call::Media(MediaAction::PlayPause));
+        assert!(executor.execute(&Call::Media(MediaAction::Pause)).ok);
         for action in [
             VolumeAction::Set(95),
             VolumeAction::Up,
@@ -251,7 +259,7 @@ mod tests {
         assert_eq!(
             executor.desktop.did,
             [
-                "press PlayPause",
+                "media Pause",
                 "volume 95",
                 "volume 100",
                 "volume 5",
@@ -259,6 +267,21 @@ mod tests {
                 "volume 100"
             ]
         );
+    }
+
+    #[test]
+    fn media_results_are_told_apart() {
+        let mut executor = Executor::new(FakeDesktop::new());
+        for (result, ok) in [
+            (MediaResult::Done, true),
+            (MediaResult::Already, true),
+            (MediaResult::NoPlayer, false),
+            (MediaResult::Ignored, false),
+        ] {
+            executor.desktop.media = result;
+            let outcome = executor.execute(&Call::Media(MediaAction::Play));
+            assert_eq!(outcome.ok, ok, "{result:?}");
+        }
     }
 
     #[test]

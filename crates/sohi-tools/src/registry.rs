@@ -77,8 +77,8 @@ impl Tool {
                 r#"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#,
             ),
             Self::Media => (
-                "Control whatever is playing, or mute the PC's sound. play_pause switches between playing and paused; mute switches the sound off or back on.",
-                r#"{"type":"object","properties":{"action":{"type":"string","enum":["play_pause","next","prev","mute"]}},"required":["action"]}"#,
+                "Play or pause music and videos, skip a track, or mute the PC's sound. The user may have changed what is playing, so call this every time you are asked, also when you think it is done already. mute switches the sound off or back on.",
+                r#"{"type":"object","properties":{"action":{"type":"string","enum":["play","pause","next","prev","mute"]}},"required":["action"]}"#,
             ),
             Self::Volume => (
                 "Change the PC's volume: one step up or down, or set it to a level. One step is 10 percent.",

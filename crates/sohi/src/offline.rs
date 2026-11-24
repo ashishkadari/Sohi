@@ -97,7 +97,8 @@ impl From<Intent> for Command {
             Intent::Open(name) => Self::Tool(Call::LaunchApp { name }),
             Intent::GoTo(url) => Self::Tool(Call::OpenUrl { url }),
             Intent::Copy(text) => Self::Tool(Call::ClipboardSet { text }),
-            Intent::Media(Media::Play | Media::Pause) => media(MediaAction::PlayPause),
+            Intent::Media(Media::Play) => media(MediaAction::Play),
+            Intent::Media(Media::Pause) => media(MediaAction::Pause),
             Intent::Media(Media::Next) => media(MediaAction::Next),
             Intent::Media(Media::Previous) => media(MediaAction::Previous),
             Intent::Mute => media(MediaAction::Mute),
@@ -153,7 +154,7 @@ mod tests {
                     text: "hello".to_owned(),
                 },
             ),
-            ("pause", Call::Media(MediaAction::PlayPause)),
+            ("pause", Call::Media(MediaAction::Pause)),
             ("mute", Call::Media(MediaAction::Mute)),
             ("volume 30", Call::Volume(VolumeAction::Set(30))),
         ] {

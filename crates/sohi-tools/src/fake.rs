@@ -1,12 +1,15 @@
 //! A desktop that only notes what was done to it.
 
 use crate::apps::App;
+use sohi_win::MediaResult;
+
 use crate::{Desktop, MediaAction};
 
 pub(crate) struct FakeDesktop {
     pub did: Vec<String>,
     pub clipboard: Option<String>,
     pub volume: u8,
+    pub media: MediaResult,
 }
 
 impl FakeDesktop {
@@ -15,6 +18,7 @@ impl FakeDesktop {
             did: Vec::new(),
             clipboard: None,
             volume: 50,
+            media: MediaResult::Done,
         }
     }
 }
@@ -44,9 +48,9 @@ impl Desktop for FakeDesktop {
         Ok(())
     }
 
-    fn press(&mut self, key: MediaAction) -> Result<(), String> {
-        self.did.push(format!("press {key:?}"));
-        Ok(())
+    fn media(&mut self, action: MediaAction) -> Result<MediaResult, String> {
+        self.did.push(format!("media {action:?}"));
+        Ok(self.media)
     }
 
     fn volume(&mut self) -> Result<u8, String> {

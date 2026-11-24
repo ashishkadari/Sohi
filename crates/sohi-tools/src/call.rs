@@ -45,11 +45,13 @@ pub enum Call {
     },
 }
 
-/// What a media key does.
+/// What happens to whatever is playing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaAction {
-    /// Play or pause.
-    PlayPause,
+    /// Play, or go on playing.
+    Play,
+    /// Pause.
+    Pause,
     /// The next track.
     Next,
     /// The previous track.
@@ -111,7 +113,8 @@ impl Call {
                 text: text(&args, "text")?,
             },
             Tool::Media => Self::Media(match text(&args, "action")?.as_str() {
-                "play_pause" => MediaAction::PlayPause,
+                "play" => MediaAction::Play,
+                "pause" => MediaAction::Pause,
                 "next" => MediaAction::Next,
                 "prev" => MediaAction::Previous,
                 "mute" => MediaAction::Mute,
@@ -157,7 +160,8 @@ impl Call {
             Self::OpenUrl { url } => format!("open {}", one_line(url)),
             Self::ClipboardGet => "read your clipboard".to_owned(),
             Self::ClipboardSet { text } => format!("copy \"{}\"", one_line(text)),
-            Self::Media(MediaAction::PlayPause) => "play or pause".to_owned(),
+            Self::Media(MediaAction::Play) => "play".to_owned(),
+            Self::Media(MediaAction::Pause) => "pause".to_owned(),
             Self::Media(MediaAction::Next) => "next track".to_owned(),
             Self::Media(MediaAction::Previous) => "previous track".to_owned(),
             Self::Media(MediaAction::Mute) => "mute or unmute".to_owned(),
@@ -287,6 +291,8 @@ mod tests {
         );
         let prev = Call::Media(MediaAction::Previous);
         good("media", r#"{"action":"prev"}"#, &prev);
+        let pause = Call::Media(MediaAction::Pause);
+        good("media", r#"{"action":"pause"}"#, &pause);
         let set = Call::Volume(VolumeAction::Set(30));
         good("volume", r#"{"action":"set","level":30}"#, &set);
         let full = Call::Volume(VolumeAction::Set(100));
@@ -307,6 +313,7 @@ mod tests {
         bad("launch_app", r#"{"name":7}"#);
         bad("launch_app", r#"{"name":"  "}"#);
         bad("media", r#"{"action":"explode"}"#);
+        bad("media", r#"{"action":"play_pause"}"#);
         bad("volume", r#"{"action":"set"}"#);
         bad("volume", r#"{"action":"set","level":101}"#);
         bad("volume", r#"{"action":"set","level":-1}"#);

@@ -1,6 +1,6 @@
 //! What the tools do to the PC, behind a trait so tests never touch it.
 
-use sohi_win::{MediaKey, WinError};
+use sohi_win::{MediaCommand, MediaKey, MediaResult, WinError};
 
 use crate::apps::{App, start_menu};
 use crate::{MediaAction, helper};
@@ -30,11 +30,11 @@ pub trait Desktop: Send {
     /// Returns why it could not be written.
     fn set_clipboard(&mut self, text: &str) -> Result<(), String>;
 
-    /// Presses a media key.
+    /// Controls what is playing.
     ///
     /// # Errors
-    /// Returns why it could not be pressed.
-    fn press(&mut self, key: MediaAction) -> Result<(), String>;
+    /// Returns why that was not possible.
+    fn media(&mut self, action: MediaAction) -> Result<MediaResult, String>;
 
     /// The volume in percent.
     ///
@@ -98,17 +98,20 @@ impl Desktop for WinDesktop {
         })
     }
 
-    fn press(&mut self, key: MediaAction) -> Result<(), String> {
-        let key = match key {
-            MediaAction::PlayPause => MediaKey::PlayPause,
-            MediaAction::Next => MediaKey::Next,
-            MediaAction::Previous => MediaKey::Previous,
-            MediaAction::Mute => MediaKey::Mute,
+    fn media(&mut self, action: MediaAction) -> Result<MediaResult, String> {
+        let command = match action {
+            MediaAction::Play => MediaCommand::Play,
+            MediaAction::Pause => MediaCommand::Pause,
+            MediaAction::Next => MediaCommand::Next,
+            MediaAction::Previous => MediaCommand::Previous,
+            MediaAction::Mute => return mute(),
         };
-        sohi_win::press_media_key(key).map_err(|err| {
-            log::warn!("cannot press a media key: {err}");
-            "Windows refused the key".to_owned()
-        })
+        let result = helper::media(command).map_err(|err| {
+            log::warn!("cannot start the helper: {err}");
+            "Windows' media controls did not work".to_owned()
+        })?;
+        log::info!("media {command:?}: {result:?}");
+        result.ok_or_else(|| "Windows' media controls did not work".to_owned())
     }
 
     fn volume(&mut self) -> Result<u8, String> {
@@ -118,6 +121,15 @@ impl Desktop for WinDesktop {
     fn set_volume(&mut self, percent: u8) -> Result<(), String> {
         sohi_win::set_volume(percent).map_err(|err| no_speakers(&err))
     }
+}
+
+fn mute() -> Result<MediaResult, String> {
+    sohi_win::press_media_key(MediaKey::Mute)
+        .map(|()| MediaResult::Done)
+        .map_err(|err| {
+            log::warn!("cannot press a media key: {err}");
+            "Windows refused the key".to_owned()
+        })
 }
 
 fn no_speakers(err: &WinError) -> String {

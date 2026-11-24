@@ -64,6 +64,7 @@ struct Args {
 enum Helper {
     Open(String),
     List,
+    Media(String),
 }
 
 impl Helper {
@@ -71,6 +72,7 @@ impl Helper {
         let worked = match self {
             Self::Open(target) => helper::run_open(target),
             Self::List => helper::run_list(),
+            Self::Media(action) => return ExitCode::from(helper::run_media(action)),
         };
         if worked {
             ExitCode::SUCCESS
@@ -88,6 +90,7 @@ impl Args {
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 helper::OPEN => parsed.helper = args.next().map(Helper::Open),
+                helper::MEDIA => parsed.helper = args.next().map(Helper::Media),
                 helper::LIST => parsed.helper = Some(Helper::List),
                 "--set-key" => parsed.set_key = Some(args.next().unwrap_or_default()),
                 "--test-panic" => parsed.test_panic = true,

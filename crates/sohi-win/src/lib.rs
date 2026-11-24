@@ -23,6 +23,7 @@ mod hwnd;
 mod instance;
 #[cfg(feature = "shell")]
 mod job;
+mod media;
 mod monitor;
 mod msgloop;
 mod network;
@@ -56,6 +57,7 @@ pub use hotkey::{HotkeyHost, HotkeyRegistration};
 pub use instance::{SingleInstance, forward_to_running_instance, register_window_message};
 #[cfg(feature = "shell")]
 pub use job::Job;
+pub use media::{MediaCommand, MediaResult, control_media};
 pub use monitor::{MonitorInfo, primary_monitor};
 pub use msgloop::{post_quit, run_message_loop};
 pub use network::NetworkWatch;

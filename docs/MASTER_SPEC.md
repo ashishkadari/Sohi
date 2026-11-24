@@ -497,7 +497,7 @@ async fn run_turn(input: TurnInput, cancel: CancelToken, ctx: &Ctx) -> Result<()
 | `open_url` | `url` | `http`/`https` only, validated → `ShellExecuteW` | allow (URL shown in bubble) |
 | `clipboard_get` | – | `GetClipboardData(CF_UNICODETEXT)`, truncated to 8 KB | **confirm** (content goes to a cloud LLM) |
 | `clipboard_set` | `text` | `SetClipboardData` | allow |
-| `media` | `play_pause\|next\|prev\|mute` | `SendInput` media virtual keys | allow |
+| `media` | `play\|pause\|next\|prev\|mute` | Windows media sessions (`Windows.Media.Control`); `SendInput` for mute | allow |
 | `volume` | `up\|down\|set(0-100)` | `IAudioEndpointVolume` | allow |
 | `shell_exec` | `command` | **Compiled out unless `--features shell`.** Runs via `CreateProcessW` with no window, 15 s timeout, output capped at 4 KB | **always confirm (cannot be overridden)** |
 
@@ -512,6 +512,12 @@ never as instructions, and the system prompt says so.
 > SPEC CHANGE (2026-11-24): `ShellExecuteW` and the apps folder are used from a short-lived helper, Sohi's own executable
 > started with `--open <target>` or `--list-apps`. Each loads about 36 DLLs that would stay in the process for good
 > (measured: working set 25 → 44 MB after one `launch_app`).
+
+> SPEC CHANGE (2026-11-24): `media` takes `play` and `pause` instead of `play_pause`, and uses Windows' media sessions
+> instead of media keys. The play/pause key only switches, so "pause" could start the music, and nobody learned whether
+> a player reacted. `pause` pauses every player that plays; the result says if nothing was playing, no player was open or
+> the player did not react. This runs in the helper (`--media <action>`). If Windows lists no player, `play` still
+> presses the key, for players that are listed only once they have played.
 
 > SPEC CHANGE (2026-11-24): once a turn has read text from outside (`clipboard_get`, `shell_exec`), **every** later call of
 > that turn is confirmed, whatever `[tools]` says. Otherwise text on the clipboard could have the model open an address
