@@ -12,6 +12,7 @@ pub mod history;
 pub mod hotkey;
 pub mod intent;
 pub mod interaction;
+pub mod markdown;
 pub mod meter;
 pub mod motion;
 pub mod persona;
