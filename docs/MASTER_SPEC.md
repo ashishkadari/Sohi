@@ -504,6 +504,8 @@ never as instructions, and the system prompt says so.
             fallback_provider = "anthropic"   anthropic_model = ""   offline_model = ""   # e.g. a small Ollama model
 [stt]       provider = "mistral"   model = "voxtral-mini-latest"   language = "auto"
 [tts]       provider = "mistral"   voice = ""   offline_voice = "system-default"
+> SPEC CHANGE (2026-11-23): `offline_voice` defaults to "Microsoft Zira" (the en-US female OneCore voice, as the persona asks); a name that
+> is not installed, or "system-default", uses the Windows default, which is usually a male voice. `voice = ""` is "Sheila" (`voice_478`).
 [persona]   user_name = "Ashish"
 [text]      speak_replies = false
 [tools]     confirm = ["clipboard_get"]   disabled = []
