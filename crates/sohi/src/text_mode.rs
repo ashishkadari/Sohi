@@ -54,6 +54,8 @@ pub struct TextSettings {
     pub follow_up: bool,
     /// `[wake] hotkey_text`.
     pub hotkey_text: String,
+    /// Start forced offline.
+    pub forced_offline: bool,
 }
 
 /// Text mode's state.
@@ -90,8 +92,11 @@ impl TextMode {
         hotkeys: HotkeyHost,
         settings: TextSettings,
     ) -> Self {
+        let net = Connectivity::new(settings.forced_offline);
+        let mut interaction = Interaction::new().with_follow_up(settings.follow_up);
+        interaction.set_voice_available(net.state().is_usable());
         Self {
-            interaction: Interaction::new().with_follow_up(settings.follow_up),
+            interaction,
             pill: None,
             runtime: None,
             history: History::new(),
@@ -103,7 +108,7 @@ impl TextMode {
             escape: None,
             pill_idle: None,
             error_hold: None,
-            net: Connectivity::new(false),
+            net,
             backoff: None,
             offline_wake: None,
             head_rect: RectPx::default(),

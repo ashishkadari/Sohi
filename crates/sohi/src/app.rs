@@ -19,6 +19,7 @@ use sohi_win::{
 use crate::corner::Corner;
 use crate::head::Head;
 use crate::hotkeys::{self, Hotkeys};
+use crate::offline_flag;
 use crate::text_mode::{TextMode, TextSettings};
 use crate::tray_menu::{self, MenuCommand, MenuState};
 
@@ -28,6 +29,8 @@ pub struct Paths {
     pub config: PathBuf,
     /// The log folder.
     pub logs: PathBuf,
+    /// Exists while forced offline is on.
+    pub offline_flag: PathBuf,
 }
 
 /// Startup options that shape the app's behaviour.
@@ -100,6 +103,7 @@ impl App {
         let presence = PresenceWatch::register(window)
             .inspect_err(|err| log::warn!("lock/display notifications unavailable: {err}"))
             .ok();
+        let forced_offline = paths.offline_flag.exists();
         let network = NetworkWatch::subscribe(window.remote())
             .inspect_err(|err| log::warn!("network hints unavailable: {err}"))
             .ok();
@@ -116,6 +120,7 @@ impl App {
                 tts: options.tts.clone(),
                 follow_up: options.wake.follow_up,
                 hotkey_text: options.wake.hotkey_text.clone(),
+                forced_offline,
             },
         );
         let mut app = Self {
@@ -123,7 +128,10 @@ impl App {
             tray,
             main_window: window.remote(),
             paths,
-            menu_state: MenuState::default(),
+            menu_state: MenuState {
+                force_offline: forced_offline,
+                ..MenuState::default()
+            },
             dpi,
             monitor: RectPx::default(),
             corner: Corner::start(window, corner),
@@ -257,6 +265,15 @@ impl App {
         }
     }
 
+    /// Toggles forced offline and remembers it across restarts.
+    fn toggle_offline(&mut self) {
+        let forced = self.text.toggle_offline(&mut self.head);
+        self.menu_state.force_offline = forced;
+        if let Err(err) = offline_flag::set(&self.paths.offline_flag, forced) {
+            log::warn!("cannot remember forced offline: {err}");
+        }
+    }
+
     fn show_menu(&mut self, x: i32, y: i32) {
         let items = tray_menu::items(self.menu_state);
         let chosen = self.tray.show_menu(&items, x, y);
@@ -279,7 +296,8 @@ impl App {
             }
             MenuCommand::Type => self.text.wake_text(TextEvent::HeadClicked, &mut self.head),
             MenuCommand::Talk => self.wake(true),
-            MenuCommand::ForceOffline | MenuCommand::StartWithWindows => {
+            MenuCommand::ForceOffline => self.toggle_offline(),
+            MenuCommand::StartWithWindows => {
                 log::info!("{command:?} is not available yet");
             }
         }

@@ -32,6 +32,17 @@ impl TextMode {
         self.event(event, head);
     }
 
+    /// Toggles forced offline; returns whether it is now on. A running
+    /// turn is cancelled: nothing may be sent any more.
+    pub fn toggle_offline(&mut self, head: &mut Head) -> bool {
+        self.net(Event::ForceToggled, head);
+        let forced = self.net.state() == State::ForcedOffline;
+        if forced && self.interaction.current_turn().is_some() {
+            self.event(Turn::Escape, head);
+        }
+        forced
+    }
+
     /// Feeds a Connectivity event and carries out the effects.
     pub fn net(&mut self, event: Event, head: &mut Head) {
         for effect in self.net.step(event) {

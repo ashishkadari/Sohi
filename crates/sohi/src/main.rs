@@ -11,6 +11,7 @@ mod dev;
 mod head;
 mod hotkeys;
 mod logger;
+mod offline_flag;
 mod perf;
 mod probe;
 mod runtime;
@@ -117,6 +118,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
     let paths = app::Paths {
         config: config_file::default_path(),
         logs: logger::default_dir(),
+        offline_flag: config_file::default_path().with_file_name(offline_flag::NAME),
     };
     let options = app::Options {
         reduced_motion: config.ui.reduced_motion,

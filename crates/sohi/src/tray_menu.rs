@@ -9,7 +9,7 @@ pub enum MenuCommand {
     Talk,
     /// Open text mode.
     Type,
-    /// Toggle forced offline (P6).
+    /// Toggle forced offline.
     ForceOffline,
     /// Open `config.toml`.
     OpenConfig,
@@ -70,7 +70,7 @@ pub fn items(state: MenuState) -> [MenuItem<'static>; 9] {
         cmd(
             MenuCommand::ForceOffline,
             "Force offline",
-            false,
+            true,
             Some(state.force_offline),
         ),
         MenuItem::Separator,
@@ -132,6 +132,7 @@ mod tests {
             [
                 MenuCommand::Talk,
                 MenuCommand::Type,
+                MenuCommand::ForceOffline,
                 MenuCommand::OpenConfig,
                 MenuCommand::OpenLogFolder,
                 MenuCommand::Quit
