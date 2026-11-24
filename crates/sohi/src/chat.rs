@@ -5,6 +5,8 @@
 //! runtime streams the reply back as [`Update`]s. Prompts and replies are
 //! never logged at `info` (spec §9.5); only timings and outcomes are.
 
+use std::cell::OnceCell;
+use std::rc::Rc;
 use std::time::Instant;
 
 use sohi_core::chat::Message;
@@ -27,6 +29,11 @@ pub enum Request {
     /// Start a voice turn: listen, transcribe, then answer like a text
     /// turn. Replaces a running turn the same way.
     Listen(Box<ListenTurn>),
+    /// Find out whether the online services answer. Runs beside any turn.
+    Probe {
+        /// Echoed in [`Update::Probed`].
+        id: u64,
+    },
     /// Cancel `turn` if it is the one running. `at` is when the user asked,
     /// for the latency log.
     Cancel {
@@ -128,6 +135,13 @@ pub enum Update {
         /// The turn.
         turn: u64,
     },
+    /// A probe ended.
+    Probed {
+        /// The probe.
+        id: u64,
+        /// Whether the service answered.
+        reached: bool,
+    },
     /// The turn failed.
     Failed {
         /// The turn.
@@ -163,9 +177,24 @@ trait TurnRunner {
 /// first turn and shared after that, so connections are pooled.
 #[derive(Default)]
 pub struct ProviderRunner {
-    http: Option<HttpClient>,
+    http: SharedClient,
     /// When the connection was last warmed (spec §3.3: cached 60 s).
     pub prewarmed: Option<Instant>,
+}
+
+/// The HTTP client of the runtime thread, once something needed it.
+pub type SharedClient = Rc<OnceCell<HttpClient>>;
+
+/// The shared client, created on first use.
+///
+/// # Errors
+/// Returns [`ProviderError::Offline`] if the TLS backend cannot start.
+pub fn shared_client(shared: &SharedClient) -> Result<HttpClient, ProviderError> {
+    if let Some(http) = shared.get() {
+        return Ok(http.clone());
+    }
+    let http = HttpClient::new()?;
+    Ok(shared.get_or_init(|| http).clone())
 }
 
 impl ProviderRunner {
@@ -174,11 +203,7 @@ impl ProviderRunner {
     /// # Errors
     /// Returns [`ProviderError::Offline`] if the TLS backend cannot start.
     pub fn client(&mut self) -> Result<HttpClient, ProviderError> {
-        if let Some(http) = &self.http {
-            return Ok(http.clone());
-        }
-        let http = HttpClient::new()?;
-        Ok(self.http.insert(http).clone())
+        shared_client(&self.http)
     }
 }
 
@@ -202,13 +227,17 @@ impl TurnRunner for ProviderRunner {
 
 /// Serves requests until the UI drops its handle.
 pub async fn serve(requests: Receiver<Request>, ui: UiLink<Update>) {
-    serve_with(requests, ui, ProviderRunner::default()).await;
+    let runner = ProviderRunner::default();
+    let http = Rc::clone(&runner.http);
+    let probe = move |id, ui: &UiLink<Update>| crate::probe::start(&http, id, ui);
+    serve_with(requests, ui, runner, probe).await;
 }
 
 async fn serve_with(
     mut requests: Receiver<Request>,
     ui: UiLink<Update>,
     mut runner: impl TurnRunner,
+    probe: impl Fn(u64, &UiLink<Update>),
 ) {
     let mut next = None;
     loop {
@@ -224,8 +253,12 @@ async fn serve_with(
             Request::Chat(turn) => Job::Chat(turn),
             Request::Listen(listen) => Job::Listen(listen),
             Request::Cancel { .. } => continue,
+            Request::Probe { id } => {
+                probe(id, &ui);
+                continue;
+            }
         };
-        match run_cancellable(&mut runner, job, &mut requests, &ui).await {
+        match run_cancellable(&mut runner, job, &mut requests, &ui, &probe).await {
             Outcome::Finished => {}
             Outcome::Cancelled { turn, at } => log::info!(
                 "turn {turn} cancelled {:.1} ms after the request; its HTTP request was dropped",
@@ -258,6 +291,7 @@ async fn run_cancellable(
     job: Job,
     requests: &mut Receiver<Request>,
     ui: &UiLink<Update>,
+    probe: &impl Fn(u64, &UiLink<Update>),
 ) -> Outcome {
     let id = job.id();
     let run = runner.run(job, ui);
@@ -275,6 +309,7 @@ async fn run_cancellable(
                 }
                 // Cancelling a turn that already ended: keep going.
                 Some(Request::Cancel { .. }) => {}
+                Some(Request::Probe { id }) => probe(id, ui),
                 Some(request) => {
                     log::info!("turn {id} replaced by a newer one");
                     return Outcome::Replaced(request);
@@ -456,126 +491,4 @@ pub(crate) fn read_key(name: KeyName) -> Result<Secret, ProviderError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::Duration;
-
-    use sohi_win::{AppWindow, EventQueue};
-
-    use super::*;
-    use crate::runtime::Runtime;
-
-    /// Sends one delta, then hangs until dropped.
-    struct Hanging {
-        dropped: Arc<AtomicBool>,
-    }
-
-    struct SetOnDrop(Arc<AtomicBool>);
-
-    impl Drop for SetOnDrop {
-        fn drop(&mut self) {
-            self.0.store(true, Ordering::SeqCst);
-        }
-    }
-
-    impl TurnRunner for Hanging {
-        async fn run(&mut self, job: Job, ui: &UiLink<Update>) {
-            let _flag = SetOnDrop(Arc::clone(&self.dropped));
-            ui.send(Update::Delta {
-                turn: job.id(),
-                text: "partial".into(),
-            });
-            std::future::pending::<()>().await;
-        }
-    }
-
-    fn turn(id: u64) -> Request {
-        Request::Chat(ChatTurn {
-            turn: id,
-            model: String::new(),
-            fallback_model: String::new(),
-            system: String::new(),
-            messages: Vec::new(),
-        })
-    }
-
-    fn cancel(turn: u64) -> Request {
-        Request::Cancel {
-            turn,
-            at: Instant::now(),
-        }
-    }
-
-    fn start(class: &str) -> (AppWindow, Runtime<Request, Update>, Arc<AtomicBool>) {
-        let window = AppWindow::create(class, 0xC130, EventQueue::new()).unwrap();
-        let dropped = Arc::new(AtomicBool::new(false));
-        let runner = Hanging {
-            dropped: Arc::clone(&dropped),
-        };
-        let runtime =
-            Runtime::start(window.remote(), move |rx, ui| serve_with(rx, ui, runner)).unwrap();
-        (window, runtime, dropped)
-    }
-
-    fn wait_until(what: &str, mut done: impl FnMut() -> bool) -> Duration {
-        let start = Instant::now();
-        while !done() {
-            assert!(
-                start.elapsed() < Duration::from_secs(5),
-                "timed out: {what}"
-            );
-            std::thread::sleep(Duration::from_micros(200));
-        }
-        start.elapsed()
-    }
-
-    fn deltas(runtime: &Runtime<Request, Update>) -> Vec<u64> {
-        runtime
-            .drain()
-            .filter_map(|u| match u {
-                Update::Delta { turn, .. } => Some(turn),
-                _ => None,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn cancel_drops_the_running_turn_within_30_ms() {
-        let (_window, runtime, dropped) = start("Sohi.Test.Cancel1");
-        runtime.send(turn(1)).unwrap();
-        let mut seen = Vec::new();
-        wait_until("first delta", || {
-            seen.extend(deltas(&runtime));
-            !seen.is_empty()
-        });
-        runtime.send(cancel(1)).unwrap();
-        let took = wait_until("turn dropped", || dropped.load(Ordering::SeqCst));
-        assert!(took < Duration::from_millis(30), "took {took:?}");
-    }
-
-    #[test]
-    fn a_stale_cancel_leaves_the_running_turn_alone() {
-        let (_window, runtime, dropped) = start("Sohi.Test.Cancel2");
-        runtime.send(turn(2)).unwrap();
-        runtime.send(cancel(1)).unwrap();
-        std::thread::sleep(Duration::from_millis(50));
-        assert!(!dropped.load(Ordering::SeqCst));
-        runtime.send(cancel(2)).unwrap();
-        wait_until("turn dropped", || dropped.load(Ordering::SeqCst));
-    }
-
-    #[test]
-    fn a_new_turn_replaces_the_running_one() {
-        let (_window, runtime, dropped) = start("Sohi.Test.Cancel3");
-        runtime.send(turn(1)).unwrap();
-        runtime.send(turn(2)).unwrap();
-        let mut seen = Vec::new();
-        wait_until("both deltas", || {
-            seen.extend(deltas(&runtime));
-            seen.len() >= 2
-        });
-        assert_eq!(seen, [1, 2]);
-        assert!(dropped.load(Ordering::SeqCst), "turn 1 was not dropped");
-    }
-}
+mod tests;

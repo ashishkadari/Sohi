@@ -5,14 +5,15 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use sohi_core::config::{ReducedMotion, SttConfig, TtsConfig, WakeConfig};
+use sohi_core::connectivity::Event as NetEvent;
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::interaction::Event as TextEvent;
 use sohi_core::visibility::Input;
 use sohi_core::wake::CornerSettings;
 use sohi_win::shell::{OpenError, open_path, open_with};
 use sohi_win::{
-    AppWindow, EventQueue, FrameTimer, HotkeyHost, PresenceWatch, RemoteWindow, TimerHost,
-    TrayIcon, WinError, WinEvent,
+    AppWindow, EventQueue, FrameTimer, HotkeyHost, NetworkWatch, Presence, PresenceWatch,
+    RemoteWindow, TimerHost, TrayIcon, WinError, WinEvent,
 };
 
 use crate::corner::Corner;
@@ -69,6 +70,8 @@ pub struct App {
     _hotkeys: Hotkeys,
     /// Lock and display-power notifications, unregistered on drop.
     _presence: Option<PresenceWatch>,
+    /// Connectivity hints, unsubscribed on drop.
+    _network: Option<NetworkWatch>,
     /// The text pill and text turns.
     text: TextMode,
 }
@@ -97,6 +100,9 @@ impl App {
         let presence = PresenceWatch::register(window)
             .inspect_err(|err| log::warn!("lock/display notifications unavailable: {err}"))
             .ok();
+        let network = NetworkWatch::subscribe(window.remote())
+            .inspect_err(|err| log::warn!("network hints unavailable: {err}"))
+            .ok();
         let text = TextMode::new(
             queue.clone(),
             window.remote(),
@@ -109,6 +115,7 @@ impl App {
                 stt: options.stt.clone(),
                 tts: options.tts.clone(),
                 follow_up: options.wake.follow_up,
+                hotkey_text: options.wake.hotkey_text.clone(),
             },
         );
         let mut app = Self {
@@ -123,6 +130,7 @@ impl App {
             cooldown: corner.cooldown,
             _hotkeys: hotkeys,
             _presence: presence,
+            _network: network,
             text,
         };
         app.relayout();
@@ -143,13 +151,16 @@ impl App {
                 // A second launch: an explicit request, like a hotkey, so
                 // full-screen suppression does not apply (spec §5.8).
                 log::info!("wake requested");
-                self.wake();
+                self.wake(false);
             }
             WinEvent::Frame => self.head.on_frame(),
             WinEvent::CursorPoll => self.on_cursor_poll(),
             WinEvent::Hotkey { id } => self.on_hotkey(id),
             WinEvent::Presence(presence) => {
                 log::info!("presence: {presence:?}");
+                if presence == Presence::Suspended(false) {
+                    self.text.net(NetEvent::Resumed, &mut self.head);
+                }
                 if self.corner.on_presence(presence) {
                     // Nobody is looking: put the head away too.
                     self.head.input(Input::Retract);
@@ -161,7 +172,7 @@ impl App {
             }
             WinEvent::HeadClicked => {
                 log::info!("head clicked");
-                self.text.event(TextEvent::HeadClicked, &mut self.head);
+                self.text.wake_text(TextEvent::HeadClicked, &mut self.head);
             }
             WinEvent::HeadContextMenu { x, y } | WinEvent::TrayMenu { x, y } => {
                 self.show_menu(x, y);
@@ -183,7 +194,10 @@ impl App {
                     log::debug!("unknown timer {id}");
                 }
             }
-            WinEvent::NetworkHint { internet } => log::info!("network hint: internet {internet}"),
+            WinEvent::NetworkHint { internet } => {
+                log::info!("network hint: internet {internet}");
+                self.text.net(NetEvent::Hint { internet }, &mut self.head);
+            }
             WinEvent::HeadHover(over) => {
                 log::debug!("head hover: {over}");
                 self.head.input(Input::Hover(over));
@@ -204,9 +218,11 @@ impl App {
         });
     }
 
-    /// A voice wake: reveal the head and listen (spec §3.3).
-    fn wake(&mut self) {
-        self.text.event(TextEvent::VoiceWake, &mut self.head);
+    /// A voice wake: reveal the head and listen (spec §3.3), or open the
+    /// pill if offline; `focus` says whether the pill may take the
+    /// keyboard.
+    fn wake(&mut self, focus: bool) {
+        self.text.wake(focus, &mut self.head);
     }
 
     fn on_cursor_poll(&mut self) {
@@ -216,7 +232,7 @@ impl App {
             .on_poll(self.monitor, |now: Instant| head.corner_gate(now, cooldown))
         {
             log::info!("wake: corner");
-            self.wake();
+            self.wake(false);
         }
     }
 
@@ -227,11 +243,11 @@ impl App {
         match id {
             hotkeys::VOICE => {
                 log::info!("hotkey: voice");
-                self.wake();
+                self.wake(true);
             }
             hotkeys::TEXT => {
                 log::info!("hotkey: text");
-                self.text.event(TextEvent::TextHotkey, &mut self.head);
+                self.text.wake_text(TextEvent::TextHotkey, &mut self.head);
             }
             hotkeys::ESCAPE => {
                 log::info!("hotkey: Esc");
@@ -261,8 +277,8 @@ impl App {
                     sohi_win::post_quit(0);
                 }
             }
-            MenuCommand::Type => self.text.event(TextEvent::HeadClicked, &mut self.head),
-            MenuCommand::Talk => self.wake(),
+            MenuCommand::Type => self.text.wake_text(TextEvent::HeadClicked, &mut self.head),
+            MenuCommand::Talk => self.wake(true),
             MenuCommand::ForceOffline | MenuCommand::StartWithWindows => {
                 log::info!("{command:?} is not available yet");
             }

@@ -195,6 +195,11 @@ impl Head {
         envelope.step(self.level_target, dt)
     }
 
+    /// What the head shows.
+    pub fn visual(&self) -> VisualState {
+        self.visual
+    }
+
     /// Changes what the head shows. A fully shown head redraws at once.
     pub fn set_visual(&mut self, visual: VisualState) {
         if visual == self.visual {

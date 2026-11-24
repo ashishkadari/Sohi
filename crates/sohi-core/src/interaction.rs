@@ -68,7 +68,11 @@ pub enum Event {
     TextSubmitted(String),
     /// A voice wake: the voice hotkey, a corner dwell, the tray's Talk or
     /// a second launch. Toggles listening off when already listening.
-    VoiceWake,
+    /// Offline, it opens the pill instead.
+    VoiceWake {
+        /// Whether an offline pill may take keyboard focus.
+        focus: bool,
+    },
     /// The user started speaking.
     SpeechStarted {
         /// The voice turn.
@@ -194,7 +198,16 @@ pub struct Interaction {
     has_input: bool,
     /// How the latest turn started.
     source: Source,
+    voice: VoiceOptions,
+}
+
+/// What voice turns may do.
+#[derive(Debug, Clone, Copy)]
+struct VoiceOptions {
+    /// Listen again after a reply.
     follow_up: bool,
+    /// The services a voice turn needs can be used.
+    available: bool,
 }
 
 impl Default for Interaction {
@@ -213,14 +226,23 @@ impl Interaction {
             focused: false,
             has_input: false,
             source: Source::Typed,
-            follow_up: false,
+            voice: VoiceOptions {
+                follow_up: false,
+                available: true,
+            },
         }
+    }
+
+    /// Sets whether voice turns are possible (Connectivity, spec §5.3). A
+    /// turn already running is left to finish or fail.
+    pub fn set_voice_available(&mut self, available: bool) {
+        self.voice.available = available;
     }
 
     /// Whether to listen again after a voice reply.
     #[must_use]
     pub fn with_follow_up(mut self, follow_up: bool) -> Self {
-        self.follow_up = follow_up;
+        self.voice.follow_up = follow_up;
         self
     }
 
@@ -311,18 +333,21 @@ impl Interaction {
     fn voice_step(&mut self, event: &Event) -> Option<Vec<Effect>> {
         use State::{Error, Idle, Listening, Speaking, TextEntry, Thinking, Transcribing};
         Some(match (self.state, event) {
-            (Idle, Event::VoiceWake) => self.listen(),
+            (Idle, Event::VoiceWake { focus }) => self.begin(*focus),
             // The hotkey again stops listening.
-            (Listening { .. }, Event::VoiceWake) => self.close(true),
+            (Listening { .. }, Event::VoiceWake { .. }) => self.close(true),
+            (TextEntry | Error, Event::VoiceWake { focus }) if !self.voice.available => {
+                vec![Effect::ShowPill { focus: *focus }]
+            }
             // Barge-in: drop whatever is going on and listen again.
             (
                 TextEntry | Transcribing { .. } | Thinking { .. } | Speaking { .. } | Error,
-                Event::VoiceWake,
-            ) => self.barge_in(),
+                Event::VoiceWake { focus },
+            ) => self.barge_in(*focus),
             (Transcribing { .. } | Thinking { .. } | Speaking { .. }, Event::HeadClicked)
                 if self.source != Source::Typed =>
             {
-                self.barge_in()
+                self.barge_in(true)
             }
             (Listening { turn }, Event::SpeechStarted { turn: t }) if turn == *t => {
                 vec![Effect::Keep(RetractRule::Working)]
@@ -399,7 +424,7 @@ impl Interaction {
     /// user is at the pill.
     fn spoken(&mut self) -> Vec<Effect> {
         let at_pill = self.focused || self.has_input;
-        if self.follow_up && !at_pill {
+        if self.voice.follow_up && self.voice.available && !at_pill {
             return self.listen_again();
         }
         let heard = matches!(self.state, State::Speaking { .. });
@@ -412,11 +437,24 @@ impl Interaction {
         vec![Effect::SetVisual(VisualState::Idle), Effect::Keep(rule)]
     }
 
-    /// Drops whatever is going on (including speech) and listens.
-    fn barge_in(&mut self) -> Vec<Effect> {
+    /// Drops whatever is going on (including speech) and starts over.
+    fn barge_in(&mut self, focus: bool) -> Vec<Effect> {
         let mut effects = self.close(false);
-        effects.extend(self.listen());
+        effects.extend(self.begin(focus));
         effects
+    }
+
+    /// Listens, or opens the pill if voice is not available.
+    fn begin(&mut self, focus: bool) -> Vec<Effect> {
+        if self.voice.available {
+            return self.listen();
+        }
+        self.state = State::TextEntry;
+        self.focused = focus;
+        vec![
+            Effect::Reveal(self.entry_rule()),
+            Effect::ShowPill { focus },
+        ]
     }
 
     fn listen(&mut self) -> Vec<Effect> {

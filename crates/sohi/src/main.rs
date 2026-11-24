@@ -12,6 +12,7 @@ mod head;
 mod hotkeys;
 mod logger;
 mod perf;
+mod probe;
 mod runtime;
 mod set_key;
 mod speak;

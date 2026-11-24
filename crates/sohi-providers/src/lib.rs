@@ -7,6 +7,7 @@ mod error;
 pub mod http;
 pub mod mistral;
 pub mod mistral_tts;
+pub mod probe;
 pub mod retry;
 pub mod sse;
 #[cfg(test)]
