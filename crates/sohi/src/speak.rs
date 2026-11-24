@@ -135,8 +135,18 @@ async fn synthesize(
         while waiting(queue) > AHEAD {
             tokio::time::sleep(TICK).await;
         }
-        let mut began = false;
-        let Err(error) = voice.say(&sentence, queue, &mut began).await else {
+        let mut began = None;
+        let asked = Instant::now();
+        let said = voice.say(&sentence, queue, &mut began).await;
+        if let Some(at) = began {
+            log::info!(
+                "turn {turn}: {} chars to speak, first samples after {} ms, all after {} ms",
+                sentence.chars().count(),
+                at.duration_since(asked).as_millis(),
+                asked.elapsed().as_millis()
+            );
+        }
+        let Err(error) = said else {
             continue;
         };
         if !matches!(voice, Voice::Online(_)) {
@@ -146,7 +156,9 @@ async fn synthesize(
         log::warn!("turn {turn}: online speech failed ({error}); using the offline voice");
         voice = voice.offline();
         // A sentence already under way is not started over.
-        if !began && let Err(error) = voice.say(&sentence, queue, &mut began).await {
+        if began.is_none()
+            && let Err(error) = voice.say(&sentence, queue, &mut began).await
+        {
             log::warn!("turn {turn}: cannot speak: {error}");
         }
     }
@@ -211,16 +223,16 @@ impl Voice {
         }
     }
 
-    /// Synthesizes one sentence into the queue. `began` is set once any of
-    /// it is there.
+    /// Synthesizes one sentence into the queue. `began` is when the
+    /// first of it arrived.
     async fn say(
         &self,
         sentence: &str,
         queue: &Queue,
-        began: &mut bool,
+        began: &mut Option<Instant>,
     ) -> Result<(), ProviderError> {
         let mut on_audio = |audio: SpeechAudio<'_>| {
-            *began = true;
+            began.get_or_insert_with(Instant::now);
             queue.borrow_mut().push_back(Piece {
                 rate: audio.sample_rate,
                 samples: audible(audio.samples),

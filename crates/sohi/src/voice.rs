@@ -314,3 +314,94 @@ mod inject {
         }))
     }
 }
+
+#[cfg(all(test, feature = "dev-inject"))]
+mod tests {
+    use sohi_core::config::{LlmConfig, SttConfig, TtsConfig};
+    use sohi_core::persona::{Channel, system_prompt};
+    use sohi_win::{AppWindow, EventQueue};
+
+    use super::*;
+    use crate::chat::ChatTurn;
+
+    /// The stages of a spoken turn, in order.
+    const STAGES: [&str; 7] = [
+        "speech started",
+        "speech ended",
+        "transcript",
+        "delta",
+        "speaking",
+        "done",
+        "played",
+    ];
+
+    fn stage(update: &Update) -> Option<&'static str> {
+        Some(match update {
+            Update::SpeechStarted { .. } => "speech started",
+            Update::SpeechEnded { .. } => "speech ended",
+            Update::Transcript { .. } => "transcript",
+            Update::Delta { .. } => "delta",
+            Update::SpeakingStarted { .. } => "speaking",
+            Update::Done { .. } => "done",
+            Update::PlaybackDone { .. } => "played",
+            Update::Level { .. } => return None,
+            other => panic!("unexpected {other:?}"),
+        })
+    }
+
+    /// Whole voice turns against the live services (spec §10.6 P5): the
+    /// injected question is heard, answered and spoken, in that order, and
+    /// the time from the end of the utterance to the first audio is within
+    /// budget (p50 1.5 s, p95 2.5 s). Run with:
+    /// `SOHI_DEV_INJECT=<question.wav> SOHI_DEV_QUIET=1 cargo test -p sohi
+    /// --features dev-inject -- --ignored end_to_end --nocapture`
+    #[tokio::test]
+    #[ignore = "needs the internet, the stored Mistral key and SOHI_DEV_INJECT"]
+    async fn end_to_end() {
+        assert!(std::env::var_os("SOHI_DEV_INJECT").is_some());
+        let turns = std::env::var("SOHI_E2E_TURNS").map_or(20, |n| n.parse().unwrap());
+        let window = AppWindow::create("Sohi.Test.Voice", 0xC141, EventQueue::new()).unwrap();
+        let mut runner = ProviderRunner::default();
+        let mut waits = Vec::new();
+        for turn in 1..=turns {
+            let (ui, updates) = crate::runtime::test_link(window.remote());
+            let chat = ChatTurn {
+                turn,
+                model: LlmConfig::default().model,
+                fallback_model: String::new(),
+                system: system_prompt(Channel::Spoken, "", &sohi_win::local_time()),
+                messages: Vec::new(),
+            };
+            let listen = ListenTurn {
+                chat,
+                stt: SttConfig::default(),
+                tts: TtsConfig::default(),
+            };
+            let seen = async {
+                let mut seen: Vec<(&str, Instant)> = Vec::new();
+                while seen.last().is_none_or(|(s, _)| *s != "played") {
+                    for name in updates.try_iter().filter_map(|u| stage(&u)) {
+                        if seen.iter().all(|(s, _)| *s != name) {
+                            seen.push((name, Instant::now()));
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                seen
+            };
+            let ((), seen) = tokio::join!(run(&mut runner, listen, &ui), seen);
+            let at = |name: &str| seen.iter().find(|(s, _)| *s == name).unwrap().1;
+            for pair in STAGES.windows(2) {
+                // Speaking may start before or after the text is complete.
+                let either = pair.contains(&"done");
+                assert!(either || at(pair[0]) <= at(pair[1]), "{seen:?}");
+            }
+            waits.push((at("speaking") - at("speech ended")).as_millis());
+        }
+        waits.sort_unstable();
+        let p50 = waits[waits.len() / 2];
+        let p95 = waits[(waits.len() * 95).div_ceil(100) - 1];
+        println!("{turns} turns: first audio p50 {p50} ms, p95 {p95} ms ({waits:?})");
+        assert!(p50 <= 1_500 && p95 <= 2_500);
+    }
+}
