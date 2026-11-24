@@ -345,7 +345,7 @@ pill and the head are away while it is open.
   sentence about full mode is never a command), or the tray menu. Handled locally, without a model, offline as well.
 - **Ways out:** saying or typing "exit full mode", Esc while nothing runs, the Exit button, Alt+F4, the tray menu. Esc
   while a turn runs only stops the turn.
-- **Take-over (about 1.9 s):** the head turns towards the screen; its cape sweeps out of the corner in waves until it
+- **Take-over (about 2.1 s):** the head turns towards the screen; its cape sweeps out of the corner in waves until it
   covers the monitor; the hooded figure opens its eyes in the middle, then shrinks into the window's header as the
   window shows. **Leaving (about 0.8 s):** the cape closes and is drawn back into the corner. Original art in the
   colours of §4.5. With reduced motion there is neither: the window just shows and hides.

@@ -42,7 +42,19 @@ If Mistral fails, Sohi can ask Anthropic for the answer: store a key with `--set
 | interrupt a reply, stop listening | `Ctrl+Shift+Space` again, or `Esc` |
 | type | `Ctrl+Alt+T`, then `Enter` to send, `↑` for your last message, `Esc` to close |
 | go on talking | just speak: after a reply Sohi listens again until 8 s of silence |
+| open full mode | say or type "full mode", or use the tray menu |
 | everything else | right-click the tray icon or the head |
+
+**Full mode** turns Sohi into a full-screen chat, for longer answers and code. What you type there may get long, formatted
+answers; what you say gets short, spoken ones.
+
+| In full mode, to | Do |
+|---|---|
+| send, break the line | `Enter`, `Shift+Enter` |
+| talk, or stop a reply | `Ctrl+M` or the Talk button |
+| copy the last code block | `Ctrl+Shift+C` or Copy code |
+| start a new chat | `Ctrl+N` or New chat |
+| leave | say or type "exit full mode", `Esc` when Sohi is idle, or Exit |
 
 Sohi can open apps and web addresses, read and write the clipboard, play, pause and skip music, and change the volume.
 
