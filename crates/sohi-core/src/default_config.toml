@@ -50,5 +50,8 @@ disabled = []                 # never offer these to the model
 [history]
 persist = false   # keep conversation history across restarts
 
+[reminders]
+speak = true     # say them as well; they are always shown
+
 [log]
 level = "info"    # "error" | "warn" | "info" | "debug" | "trace"

@@ -615,8 +615,8 @@ fail the turn gracefully) · `WM_ENDSESSION` (flush the log, exit).
 - **When one is due:** Sohi comes out, shows it in the pill (in full mode: in the transcript) and says it, with the online
   voice or, offline, the Windows one. A toast goes out as well, so it can be found later. The head stays 60 s. The mic
   **never** opens by itself for it.
-- **Not now:** while a turn runs it waits for the turn to end; while the session is locked, the display off or the PC
-  asleep it waits for the user to be back. While something is full screen it is shown and not spoken. A reminder more
+- **Not now:** while a turn runs it waits for the turn to end; while the session is locked or the PC asleep
+  it waits for the user to be back; with only the display off it is said all the same. While something is full screen it is shown and not spoken. A reminder more
   than 2 minutes late says when it was due.
 - **Snooze:** an announced reminder joins the conversation, so "again in ten minutes" works.
 - **Full mode** lists them with the Reminders button or `Ctrl+R`.

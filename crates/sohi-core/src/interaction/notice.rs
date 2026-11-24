@@ -52,7 +52,12 @@ impl Interaction {
                 Effect::Keep(rule)
             },
             Effect::ShowPill { focus: false },
-            Effect::SetBubble(text.to_owned()),
+            if parked {
+                Effect::SetBubble(text.to_owned())
+            } else {
+                // What is being read stays.
+                Effect::AddNotice(text.to_owned())
+            },
         ];
         if aloud {
             let turn = self.next_turn;
@@ -130,6 +135,7 @@ mod tests {
         it.step(Event::TextHotkey);
         let effects = it.step(announce(true));
         assert_eq!(effects[0], Effect::Keep(RetractRule::Working));
+        assert!(effects.contains(&Effect::AddNotice("Reminder: tea.".to_owned())));
         let effects = it.step(Event::PlaybackDone { turn: 1 });
         assert!(effects.contains(&Effect::Keep(RetractRule::TextFocused)));
     }

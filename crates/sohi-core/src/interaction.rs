@@ -188,6 +188,8 @@ pub enum Effect {
     HidePill,
     /// Replace the bubble's text.
     SetBubble(String),
+    /// Add a notice to what the bubble holds.
+    AddNotice(String),
     /// Append to the bubble.
     AppendBubble(String),
     /// Start a text turn.

@@ -103,6 +103,11 @@ impl Corner {
         away
     }
 
+    /// Whether the session is locked or the PC asleep.
+    pub fn is_locked(&self) -> bool {
+        self.away.locked || self.away.suspended
+    }
+
     fn set_period(&self, period: Option<Duration>) {
         let before = self.poller.period();
         if let Err(err) = self.poller.set_period(period) {

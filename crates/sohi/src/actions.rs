@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use sohi_core::chat::{ToolCall, ToolRun};
 use sohi_tools::{
-    Call, Desktop, Executor, Gate, Outcome, Permit, Policy, Question, Verdict, WinDesktop,
+    Agenda, Call, Desktop, Executor, Gate, Outcome, Permit, Policy, Question, Verdict, WinDesktop,
 };
 use tokio::sync::oneshot;
 
@@ -39,11 +39,16 @@ pub struct Toolbox {
 
 impl Default for Toolbox {
     fn default() -> Self {
-        Self::on(Executor::new(WinDesktop))
+        Self::new(Agenda::default())
     }
 }
 
 impl Toolbox {
+    /// The tools of this PC, for the reminders of `agenda`.
+    pub fn new(agenda: Agenda) -> Self {
+        Self::on(Executor::new(WinDesktop).with_agenda(agenda))
+    }
+
     fn on(executor: impl Run + 'static) -> Self {
         Self {
             executor: Arc::new(Mutex::new(executor)),

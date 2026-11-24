@@ -38,6 +38,7 @@ const LINE: u32 = 0x2E_1C_21;
 pub(crate) const BUTTON_EVENTS: [FullEvent; BUTTONS] = [
     FullEvent::Talk,
     FullEvent::CopyCode,
+    FullEvent::Reminders,
     FullEvent::NewChat,
     FullEvent::Exit,
 ];
@@ -76,7 +77,7 @@ impl Paint {
             size: Cell::default(),
             fonts: RefCell::new(None),
             status: RefCell::default(),
-            labels: RefCell::new(["Talk", "Copy code", "New chat", "Exit"]),
+            labels: RefCell::new(["Talk", "Copy code", "Reminders", "New chat", "Exit"]),
             avatar: RefCell::new(None),
             brushes: Brushes {
                 ground: solid(GROUND)?,
@@ -303,6 +304,7 @@ fn shortcut(key: u16, input: bool) -> Option<FullEvent> {
         k if k == VK_ESCAPE.0 => Some(FullEvent::Escape),
         k if k == VK_RETURN.0 && input && !shift && !ctrl => Some(FullEvent::Submit),
         0x4E if ctrl && !shift => Some(FullEvent::NewChat), // N
+        0x52 if ctrl && !shift => Some(FullEvent::Reminders), // R
         0x4D if ctrl && !shift => Some(FullEvent::Talk),    // M
         0x43 if ctrl && shift => Some(FullEvent::CopyCode), // C
         _ => None,

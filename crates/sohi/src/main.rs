@@ -168,6 +168,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         config: config_file::default_path(),
         logs: logger::default_dir(),
         offline_flag: config_file::default_path().with_file_name(offline_flag::NAME),
+        reminders: config_file::default_path().with_file_name("reminders.json"),
     };
     let options = app::Options {
         reduced_motion: config.ui.reduced_motion,
@@ -180,6 +181,7 @@ fn run() -> Result<ExitCode, sohi_win::WinError> {
         stt: config.stt.clone(),
         tts: config.tts.clone(),
         tools: config.tools.clone(),
+        speak_reminders: config.reminders.speak,
     };
     let mut app = app::App::new(&queue, Rc::clone(&timer), &window, paths, &options)?;
     if args.dev_test_card {

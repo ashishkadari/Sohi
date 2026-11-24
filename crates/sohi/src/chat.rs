@@ -13,7 +13,7 @@ use sohi_core::chat::{Message, ToolRun};
 use sohi_core::config::{SttConfig, TtsConfig};
 use sohi_core::full::Command;
 use sohi_providers::{HttpClient, ProviderError};
-use sohi_tools::Policy;
+use sohi_tools::{Agenda, Policy};
 use tokio::sync::mpsc::Receiver;
 
 use crate::actions::Toolbox;
@@ -28,6 +28,9 @@ pub enum Request {
     /// Start a voice turn: listen, transcribe, then answer like a text
     /// turn. Replaces a running turn the same way.
     Listen(Box<ListenTurn>),
+    /// Say something that needs no model. Replaces a running turn the same
+    /// way.
+    Say(Box<SayTurn>),
     /// Find out whether the online services answer. Runs beside any turn.
     Probe {
         /// Echoed in [`Update::Probed`].
@@ -80,6 +83,17 @@ pub struct ListenTurn {
     pub chat: ChatTurn,
     /// `[stt]` settings.
     pub stt: SttConfig,
+    /// `[tts]` settings.
+    pub tts: TtsConfig,
+}
+
+/// Something to say.
+#[derive(Debug)]
+pub struct SayTurn {
+    /// The interaction's turn id.
+    pub turn: u64,
+    /// What.
+    pub text: String,
     /// `[tts]` settings.
     pub tts: TtsConfig,
 }
@@ -196,6 +210,7 @@ pub enum Update {
 enum Job {
     Chat(ChatTurn),
     Listen(Box<ListenTurn>),
+    Say(Box<SayTurn>),
 }
 
 impl Job {
@@ -203,6 +218,7 @@ impl Job {
         match self {
             Self::Chat(turn) => turn.turn,
             Self::Listen(listen) => listen.chat.turn,
+            Self::Say(say) => say.turn,
         }
     }
 }
@@ -268,13 +284,23 @@ impl TurnRunner for ProviderRunner {
                 }
             }
             Job::Listen(listen) => crate::voice::run(self, *listen, ui).await,
+            Job::Say(say) => {
+                match self.client() {
+                    Ok(http) => crate::speak::say(&http, &say, ui).await,
+                    Err(error) => log::warn!("cannot speak: {error}"),
+                }
+                ui.send(Update::PlaybackDone { turn: say.turn });
+            }
         }
     }
 }
 
 /// Serves requests until the UI drops its handle.
-pub async fn serve(requests: Receiver<Request>, ui: UiLink<Update>) {
-    let runner = ProviderRunner::default();
+pub async fn serve(requests: Receiver<Request>, ui: UiLink<Update>, agenda: Agenda) {
+    let runner = ProviderRunner {
+        toolbox: Toolbox::new(agenda),
+        ..ProviderRunner::default()
+    };
     let http = Rc::clone(&runner.http);
     let answers = runner.toolbox.answers();
     let aside = move |aside, ui: &UiLink<Update>| match aside {
@@ -309,6 +335,7 @@ async fn serve_with(
         let job = match request {
             Request::Chat(turn) => Job::Chat(turn),
             Request::Listen(listen) => Job::Listen(listen),
+            Request::Say(say) => Job::Say(say),
             Request::Cancel { .. } => continue,
             Request::Answer { turn, ask, yes } => {
                 aside(Aside::Answer { turn, ask, yes }, &ui);

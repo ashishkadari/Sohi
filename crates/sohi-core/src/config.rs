@@ -39,6 +39,8 @@ pub struct Config {
     pub tools: ToolsConfig,
     /// Conversation history.
     pub history: HistoryConfig,
+    /// Reminders.
+    pub reminders: RemindersConfig,
     /// Logging.
     pub log: LogConfig,
 }
@@ -255,6 +257,20 @@ impl Default for ToolsConfig {
 pub struct HistoryConfig {
     /// Keep history across restarts.
     pub persist: bool,
+}
+
+/// `[reminders]` section.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct RemindersConfig {
+    /// Say them as well.
+    pub speak: bool,
+}
+
+impl Default for RemindersConfig {
+    fn default() -> Self {
+        Self { speak: true }
+    }
 }
 
 /// Log verbosity.

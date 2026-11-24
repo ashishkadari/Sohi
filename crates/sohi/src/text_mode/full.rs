@@ -127,6 +127,8 @@ impl TextMode {
             FullEvent::Talk => self.wake(true, head),
             FullEvent::Escape | FullEvent::Exit => self.leave_full(head),
             FullEvent::CopyCode => self.copy_code(),
+            FullEvent::Reminders if !busy => self.list_reminders(),
+            FullEvent::Reminders => {}
             FullEvent::NewChat => {
                 if busy {
                     self.event(Event::Escape, head);
@@ -196,7 +198,7 @@ impl TextMode {
             return Some(effect);
         };
         match effect {
-            Effect::SetBubble(text) => full.begin(&text),
+            Effect::SetBubble(text) | Effect::AddNotice(text) => full.begin(&text),
             Effect::AppendBubble(text) => full.stream(&text),
             Effect::Reveal(_)
             | Effect::Keep(_)

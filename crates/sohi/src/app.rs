@@ -10,6 +10,7 @@ use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::interaction::Event as TextEvent;
 use sohi_core::visibility::Input;
 use sohi_core::wake::CornerSettings;
+use sohi_tools::Agenda;
 use sohi_win::{
     AppTimer, AppWindow, EventQueue, FrameTimer, HotkeyHost, NetworkWatch, Presence, PresenceWatch,
     RemoteWindow, TimerHost, TrayIcon, WinError, WinEvent,
@@ -31,6 +32,8 @@ pub struct Paths {
     pub logs: PathBuf,
     /// Exists while forced offline is on.
     pub offline_flag: PathBuf,
+    /// The reminders.
+    pub reminders: PathBuf,
 }
 
 /// Startup options that shape the app's behaviour.
@@ -55,10 +58,12 @@ pub struct Options {
     pub tts: TtsConfig,
     /// `[tools]`.
     pub tools: ToolsConfig,
+    /// `[reminders] speak` from the config.
+    pub speak_reminders: bool,
 }
 
 impl Options {
-    fn text_settings(&self, forced_offline: bool) -> TextSettings {
+    fn text_settings(&self, forced_offline: bool, agenda: Agenda) -> TextSettings {
         TextSettings {
             model: self.llm_model.clone(),
             fallback_model: self.llm_fallback_model.clone(),
@@ -69,6 +74,8 @@ impl Options {
             tools: self.tools.clone(),
             follow_up: self.wake.follow_up,
             hotkey_text: self.wake.hotkey_text.clone(),
+            speak_reminders: self.speak_reminders,
+            agenda,
             forced_offline,
         }
     }
@@ -148,13 +155,19 @@ impl App {
         let network = NetworkWatch::subscribe(window.remote())
             .inspect_err(|err| log::warn!("network hints unavailable: {err}"))
             .ok();
+        let main_window = window.remote();
+        let agenda = Agenda::open(paths.reminders.clone(), move || {
+            if let Err(err) = main_window.post_runtime_event() {
+                log::warn!("cannot report a changed reminder: {err}");
+            }
+        });
         let text = TextMode::new(
             queue.clone(),
             ticker,
             window.remote(),
             TimerHost::new(window),
             HotkeyHost::new(window),
-            options.text_settings(forced_offline),
+            options.text_settings(forced_offline, agenda),
         );
         let mut app = Self {
             head,
@@ -162,7 +175,7 @@ impl App {
             tray_retry: None,
             tray_tries: 0,
             timers: TimerHost::new(window),
-            main_window: window.remote(),
+            main_window,
             paths,
             menu_state: MenuState {
                 force_offline: forced_offline,
@@ -189,6 +202,11 @@ impl App {
         // A retract rule, the voice hotkey or a lock may have put the head
         // away: text mode closes with it.
         self.text.follow_head(&mut self.head);
+        if let Some(text) = self.text.take_toast()
+            && let Err(err) = self.tray.inform("Sohi", &text)
+        {
+            log::warn!("cannot show a toast: {err}");
+        }
     }
 
     fn dispatch(&mut self, event: WinEvent) {
@@ -202,17 +220,7 @@ impl App {
             WinEvent::Frame => self.on_frame(),
             WinEvent::CursorPoll => self.on_cursor_poll(),
             WinEvent::Hotkey { id } => self.on_hotkey(id),
-            WinEvent::Presence(presence) => {
-                log::info!("presence: {presence:?}");
-                if presence == Presence::Suspended(false) {
-                    self.text.net(NetEvent::Resumed, &mut self.head);
-                }
-                if self.corner.on_presence(presence) {
-                    // Nobody is looking: put the head away too.
-                    self.head.input(Input::Retract);
-                    self.text.away(&mut self.head);
-                }
-            }
+            WinEvent::Presence(presence) => self.on_presence(presence),
             WinEvent::DisplayChanged => {
                 log::info!("display changed");
                 self.relayout();
@@ -230,7 +238,11 @@ impl App {
                 self.tray_tries = 0;
                 self.show_tray();
             }
-            WinEvent::Runtime => self.text.on_runtime(&mut self.head),
+            WinEvent::Runtime => {
+                self.text.on_runtime(&mut self.head);
+                // A tool may have changed them.
+                self.text.arm_reminders();
+            }
             WinEvent::PillSubmit
             | WinEvent::PillEscape
             | WinEvent::PillRecall
@@ -254,6 +266,19 @@ impl App {
                 self.head.input(Input::Hover(over));
             }
         }
+    }
+
+    fn on_presence(&mut self, presence: Presence) {
+        log::info!("presence: {presence:?}");
+        if presence == Presence::Suspended(false) {
+            self.text.net(NetEvent::Resumed, &mut self.head);
+        }
+        if self.corner.on_presence(presence) {
+            // Nobody is looking: put the head away too.
+            self.head.input(Input::Retract);
+            self.text.away(&mut self.head);
+        }
+        self.text.set_away(self.corner.is_locked(), &mut self.head);
     }
 
     fn on_frame(&mut self) {
