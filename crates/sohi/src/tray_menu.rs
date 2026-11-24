@@ -9,6 +9,8 @@ pub enum MenuCommand {
     Talk,
     /// Open text mode.
     Type,
+    /// Open or leave full mode.
+    FullMode,
     /// Toggle forced offline.
     ForceOffline,
     /// Open `config.toml`.
@@ -21,9 +23,10 @@ pub enum MenuCommand {
     Quit,
 }
 
-const COMMANDS: [MenuCommand; 7] = [
+const COMMANDS: [MenuCommand; 8] = [
     MenuCommand::Talk,
     MenuCommand::Type,
+    MenuCommand::FullMode,
     MenuCommand::ForceOffline,
     MenuCommand::OpenConfig,
     MenuCommand::OpenLogFolder,
@@ -52,12 +55,14 @@ impl MenuCommand {
 pub struct MenuState {
     /// Forced offline is on.
     pub force_offline: bool,
+    /// Full mode is open.
+    pub full_mode: bool,
     /// Sohi starts with Windows.
     pub start_with_windows: bool,
 }
 
 /// The menu, in spec order.
-pub fn items(state: MenuState) -> [MenuItem<'static>; 9] {
+pub fn items(state: MenuState) -> [MenuItem<'static>; 10] {
     let cmd = |c: MenuCommand, label, enabled, checked| MenuItem::Command {
         id: c.id(),
         label,
@@ -67,6 +72,12 @@ pub fn items(state: MenuState) -> [MenuItem<'static>; 9] {
     [
         cmd(MenuCommand::Talk, "Talk", true, None),
         cmd(MenuCommand::Type, "Type", true, None),
+        cmd(
+            MenuCommand::FullMode,
+            "Full mode",
+            true,
+            Some(state.full_mode),
+        ),
         cmd(
             MenuCommand::ForceOffline,
             "Force offline",
@@ -132,6 +143,7 @@ mod tests {
             [
                 MenuCommand::Talk,
                 MenuCommand::Type,
+                MenuCommand::FullMode,
                 MenuCommand::ForceOffline,
                 MenuCommand::OpenConfig,
                 MenuCommand::OpenLogFolder,

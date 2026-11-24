@@ -63,6 +63,8 @@ impl LocalTime {
 pub enum Channel {
     /// Typed, answered in the pill.
     Typed,
+    /// Typed in full mode, answered there.
+    Full,
     /// Spoken, answered aloud (and in the pill).
     Spoken,
 }
@@ -87,6 +89,12 @@ pub fn system_prompt(channel: Channel, user_name: &str, now: &LocalTime, tools: 
             "\n\nThis is a typed chat. Be concise: a few sentences unless more is \
              asked for. Plain text reads best; use short lists or code blocks only \
              when they help."
+        }
+        Channel::Full => {
+            "\n\nThis is a typed chat in full mode: a full-screen window that shows \
+             Markdown (headings, lists, bold, code). Answer as fully as the question \
+             needs, and no longer. Put all code in fenced blocks with their language, \
+             complete and ready to use."
         }
         Channel::Spoken => {
             "\n\nThis is a spoken conversation: your reply is read aloud. Answer \

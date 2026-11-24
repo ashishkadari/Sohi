@@ -164,6 +164,13 @@ impl CapeRenderer {
             let (Some(&a), Some(&b)) = (edge.get(start), edge.get(end)) else {
                 continue;
             };
+            // Not fallen yet.
+            if [a, b]
+                .iter()
+                .any(|p| (p.0 - from.0).hypot(p.1 - from.1) < 2.0)
+            {
+                continue;
+            }
             let sway = 0.13 * (t * 4.0 + px(fold) * 1.3).sin();
             // Each side is an S: cloth that ripples, not a ray.
             let bend = |p: (f32, f32), at: f32, sway: f32| {
@@ -274,7 +281,7 @@ impl Figure {
             let collar = PathBuilder::from_rect(collar);
             fill(pm, &collar, ts, tokens::GLOW, 0.45 * eyes * alpha);
         }
-        if eyes <= 0.0 {
+        if eyes < 0.02 {
             return;
         }
         for (i, (x, y)) in EYES.into_iter().enumerate() {

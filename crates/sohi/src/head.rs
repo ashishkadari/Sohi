@@ -18,9 +18,10 @@ use sohi_core::visibility::{Effect, Input, Phase, Visibility};
 use sohi_core::visual::{ERROR_FLASH, VisualState};
 use sohi_core::wake::Gate;
 use sohi_render::{HeadRenderer, Scene};
-use sohi_win::{EventQueue, FRAME_30_FPS, FRAME_60_FPS, Frame, FrameTimer, HeadWindow, WinError};
+use sohi_win::{EventQueue, FRAME_30_FPS, FRAME_60_FPS, Frame, HeadWindow, WinError};
 
 use crate::dev::{self, TestCardPulse, percentile};
+use crate::ticker::{Ticker, Who};
 
 /// A timer tick this close to a deadline counts as reaching it.
 const TICK_SLACK: Duration = Duration::from_millis(8);
@@ -63,7 +64,7 @@ struct PerfTrace {
 pub struct Head {
     window: HeadWindow,
     /// Shared with the message loop; ticks only while something animates.
-    timer: Rc<FrameTimer>,
+    timer: Rc<Ticker>,
     /// Period the frame timer is ticking at, if any.
     tick: Option<Duration>,
     /// Window rectangle in physical pixels.
@@ -104,7 +105,7 @@ impl Head {
     /// Returns [`WinError`] if the window cannot be created.
     pub fn new(
         queue: &EventQueue,
-        timer: Rc<FrameTimer>,
+        timer: Rc<Ticker>,
         reduced_pref: ReducedMotion,
         perf: bool,
     ) -> Result<Self, WinError> {
@@ -291,12 +292,41 @@ impl Head {
         }
     }
 
-    fn reveal_from_parked(&mut self, now: Instant) {
-        self.reduced = match self.reduced_pref {
+    /// Whether to leave movement out.
+    pub fn reduced_motion(&self) -> bool {
+        match self.reduced_pref {
             ReducedMotion::System => !sohi_win::animations_enabled(),
             ReducedMotion::On => true,
             ReducedMotion::Off => false,
-        };
+        }
+    }
+
+    /// Parks without sliding: something else takes the head's place.
+    pub fn vanish(&mut self) {
+        if self.phase() != Phase::Parked {
+            self.input(Input::Retract);
+            self.skip_slide();
+        }
+    }
+
+    /// Shows without sliding, for `hold`.
+    pub fn appear(&mut self, hold: Duration) {
+        self.input(Input::Reveal {
+            retract_after: Some(hold),
+        });
+        self.skip_slide();
+    }
+
+    fn skip_slide(&mut self) {
+        if let Some(motion) = self.motion {
+            let now = Instant::now();
+            self.finish_slide(now, motion);
+            self.reschedule(now);
+        }
+    }
+
+    fn reveal_from_parked(&mut self, now: Instant) {
+        self.reduced = self.reduced_motion();
         log::info!("reveal (reduced motion: {})", self.reduced);
         self.motion = Some(Motion {
             slide: Slide::Reveal,
@@ -381,10 +411,7 @@ impl Head {
             return;
         }
         self.tick = period;
-        match period {
-            Some(p) => self.timer.start(p),
-            None => self.timer.stop(),
-        }
+        self.timer.set(Who::Head, period);
     }
 
     /// `--dev-states`: moves to the state for this point in the cycle, and
@@ -401,18 +428,13 @@ impl Head {
         }
     }
 
-    /// Presents the head pixels at `pose`.
-    fn present_pose(&mut self, pose: Pose) {
-        let started = Instant::now();
-        let (w, h) = (self.rect.width(), self.rect.height());
-        let visor = self.visor_level(started);
-        self.prepare_renderer();
-        let Some(renderer) = self.renderer.as_mut() else {
-            log::warn!("cannot draw a {w}x{h} head");
-            return;
-        };
-        let t = started.saturating_duration_since(self.visual_since);
-        let scene = Scene {
+    /// What to draw now. Steps the visor: only one place may draw at a
+    /// time (the head window, or full mode).
+    pub fn scene(&mut self) -> Scene {
+        let now = Instant::now();
+        let visor = self.visor_level(now);
+        let t = now.saturating_duration_since(self.visual_since);
+        Scene {
             level: if self.dev_cycle.is_some() {
                 dev::fake_level(t)
             } else {
@@ -420,9 +442,21 @@ impl Head {
             },
             error_age: self
                 .error_at
-                .map(|at| started.saturating_duration_since(at))
+                .map(|at| now.saturating_duration_since(at))
                 .filter(|age| *age < ERROR_FLASH),
             ..Scene::new(self.visual, t)
+        }
+    }
+
+    /// Presents the head pixels at `pose`.
+    fn present_pose(&mut self, pose: Pose) {
+        let started = Instant::now();
+        let (w, h) = (self.rect.width(), self.rect.height());
+        let scene = self.scene();
+        self.prepare_renderer();
+        let Some(renderer) = self.renderer.as_mut() else {
+            log::warn!("cannot draw a {w}x{h} head");
+            return;
         };
         let pixels = renderer.render(&scene);
         let frame = Frame {
