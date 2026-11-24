@@ -247,7 +247,7 @@ async fn synthesize(
 
 /// The samples to play: as they are, or (with the `dev-inject` feature
 /// and `SOHI_DEV_QUIET` set) at -48 dB, so repeated tests stay unheard.
-fn audible(samples: &[i16]) -> Vec<i16> {
+pub fn audible(samples: &[i16]) -> Vec<i16> {
     #[cfg(feature = "dev-inject")]
     if std::env::var_os("SOHI_DEV_QUIET").is_some() {
         return samples.iter().map(|s| s / 256).collect();

@@ -53,5 +53,9 @@ persist = false   # keep conversation history across restarts
 [reminders]
 speak = true     # say them as well; they are always shown
 
+[sounds]
+enabled = true
+volume = 40      # percent
+
 [log]
 level = "info"    # "error" | "warn" | "info" | "debug" | "trace"

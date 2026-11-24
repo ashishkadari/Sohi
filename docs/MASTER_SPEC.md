@@ -634,7 +634,8 @@ eminders.json`, plain text, written through a temporary file. A file that cannot
 - **When:** the mic opens (two rising notes), the utterance ended (a soft tick), a tool question waits, something failed,
   a reminder is due (a chime, before it is said), the cape takes over and goes back (a whoosh; none with reduced motion).
 - **Synthesized** in code (`sohi-audio::sound`), mono 24 kHz, made when played: no sound files, nothing kept.
-- **Never taken for speech:** the mic may hear them; a test feeds each to the voice detector.
+- **Never taken for speech:** only the sound of the mic opening may be heard by the mic. It is so short that the voice
+  detector discards it (tested); the question's sound is left out in voice turns, where the mic opens for the answer.
 - **Quiet:** a reminder makes no sound while something else is full screen (§5.10). A new sound replaces the one playing.
   A sound never delays anything: it plays on a thread of its own (§5.5), which ends with it.
 - **Config:** `[sounds] enabled = true`, `volume = 40` (percent).
@@ -802,7 +803,7 @@ Every phase also requires:
 
 ### P11
 - [ ] Each sound plays at its moment, once, within 100 ms; `enabled = false` silences all of them.
-- [ ] No sound is taken for speech, and no audio device stays open after one.
+- [ ] No sound is taken for an utterance, and no audio device stays open after one.
 
 ---
 

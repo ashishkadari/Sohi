@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use sohi_audio::sound::Sound;
 use sohi_core::interaction::Event;
 use sohi_core::reminder::announce;
 use sohi_core::stamp::Stamp;
@@ -112,7 +113,11 @@ impl TextMode {
         let text = announce(&due, now);
         // Full mode itself is full screen, too, even behind a window.
         let ours = self.is_full();
-        let aloud = self.reminding.speak && (ours || sohi_win::shell::do_not_disturb().is_none());
+        let quiet = !ours && sohi_win::shell::do_not_disturb().is_some();
+        let aloud = self.reminding.speak && !quiet;
+        if !quiet {
+            self.sounds.play(Sound::Reminder);
+        }
         log::info!("{} reminder(s) due (aloud: {aloud})", due.len());
         self.history.push_user(CAME_DUE);
         self.history.push_reply(text.clone(), Vec::new());

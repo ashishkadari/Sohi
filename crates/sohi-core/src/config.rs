@@ -41,6 +41,8 @@ pub struct Config {
     pub history: HistoryConfig,
     /// Reminders.
     pub reminders: RemindersConfig,
+    /// Sounds.
+    pub sounds: SoundsConfig,
     /// Logging.
     pub log: LogConfig,
 }
@@ -270,6 +272,25 @@ pub struct RemindersConfig {
 impl Default for RemindersConfig {
     fn default() -> Self {
         Self { speak: true }
+    }
+}
+
+/// `[sounds]` section.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct SoundsConfig {
+    /// Play them.
+    pub enabled: bool,
+    /// How loud, in percent.
+    pub volume: u8,
+}
+
+impl Default for SoundsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            volume: 40,
+        }
     }
 }
 
