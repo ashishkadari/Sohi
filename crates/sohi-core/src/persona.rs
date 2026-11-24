@@ -58,9 +58,18 @@ impl LocalTime {
     }
 }
 
+/// How the user and Sohi are talking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Channel {
+    /// Typed, answered in the pill.
+    Typed,
+    /// Spoken, answered aloud (and in the pill).
+    Spoken,
+}
+
 /// The system prompt for a typed conversation. `user_name` may be empty.
 #[must_use]
-pub fn text_system_prompt(user_name: &str, now: &LocalTime) -> String {
+pub fn system_prompt(channel: Channel, user_name: &str, now: &LocalTime) -> String {
     let mut prompt = String::from(
         "You are Sohi, an assistant living on the user's Windows desktop. \
          You are a sharp-witted, calm American woman: a netrunner with dry, \
@@ -72,14 +81,29 @@ pub fn text_system_prompt(user_name: &str, now: &LocalTime) -> String {
     } else {
         let _ = write!(prompt, " Call the user {name}.");
     }
+    prompt.push_str(match channel {
+        Channel::Typed => {
+            "\n\nThis is a typed chat. Be concise: a few sentences unless more is \
+             asked for. Plain text reads best; use short lists or code blocks only \
+             when they help."
+        }
+        Channel::Spoken => {
+            "\n\nThis is a spoken conversation: your reply is read aloud. Answer \
+             the way people talk, in at most two short sentences unless the user \
+             asks for more, and open with a short sentence. No markdown, lists, \
+             emoji or web addresses, and no stage directions. Only if the user \
+             asks for code, put it in a code block: it is shown, not read."
+        }
+    });
     let _ = write!(
         prompt,
-        "\n\nThis is a typed chat. Be concise: a few sentences unless more is \
-         asked for. Plain text reads best; use short lists or code blocks only \
-         when they help.\n\nIt is now {} (the user's local time). You cannot \
+        "\n\nIt is now {} (the user's local time). You cannot \
          act on the computer yet; if asked to, say so briefly.",
         now.describe()
     );
+    if channel == Channel::Spoken {
+        prompt.push_str(SPOKEN_NOTE);
+    }
     prompt
 }
 
@@ -115,7 +139,7 @@ pub fn correct_heard_name(text: &str) -> String {
 }
 
 /// Added to the system prompt of a spoken turn.
-pub const SPOKEN_NOTE: &str = "\n\nThe user's latest message was spoken and transcribed. \
+const SPOKEN_NOTE: &str = "\n\nThe user's latest message was spoken and transcribed. \
     Speech recognition confuses your name, Sohi, with \"so I\", \"so he\" and the like, \
     in either direction: read whichever fits, without remarking on it.";
 
@@ -168,7 +192,7 @@ mod tests {
 
     #[test]
     fn the_prompt_uses_the_name_and_the_time() {
-        let prompt = text_system_prompt("Ashish", &NOW);
+        let prompt = system_prompt(Channel::Typed, "Ashish", &NOW);
         assert!(prompt.contains("Call the user Ashish."));
         assert!(prompt.contains("Sunday 22 November 2026, 09:05"));
         assert!(prompt.contains("netrunner"));
@@ -176,7 +200,7 @@ mod tests {
 
     #[test]
     fn an_empty_name_is_never_invented() {
-        let prompt = text_system_prompt("  ", &NOW);
+        let prompt = system_prompt(Channel::Typed, "  ", &NOW);
         assert!(prompt.contains("Do not call the user by any name."));
     }
 

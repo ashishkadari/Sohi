@@ -4,7 +4,7 @@
 //! warmed at the same time. Every 32 ms the samples captured so far go
 //! through the segmenter and the level goes to the UI (about 30 Hz). When
 //! the utterance ends the mic closes, the audio is transcribed, and the
-//! turn carries on as a text turn with the transcript as the prompt.
+//! transcript is answered aloud (see [`crate::speak`]).
 //!
 //! Dropping the future (cancel, barge-in) drops the capture, which stops
 //! the mic thread.
@@ -21,8 +21,9 @@ use sohi_core::secret::KeyName;
 use sohi_providers::voxtral::TranscribeRequest;
 use sohi_providers::{HttpClient, Mistral, ProviderError, Voxtral, mistral};
 
-use crate::chat::{ListenTurn, ProviderRunner, Update, answer, read_key};
+use crate::chat::{ListenTurn, ProviderRunner, Update, read_key};
 use crate::runtime::UiLink;
+use crate::speak::answer_aloud;
 
 /// How often captured audio is processed (and the level sent).
 const TICK: Duration = Duration::from_millis(32);
@@ -74,7 +75,7 @@ pub async fn run(runner: &mut ProviderRunner, listen: ListenTurn, ui: &UiLink<Up
     }
     let mut chat = listen.chat;
     chat.messages.push(Message::user(text));
-    answer(&http, &chat, ui).await;
+    answer_aloud(&http, &chat, &listen.tts, ended, ui).await;
 }
 
 /// Warms the connection (TCP + TLS) in the background, at most once a

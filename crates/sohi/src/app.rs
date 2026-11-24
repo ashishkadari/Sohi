@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use sohi_core::config::{ReducedMotion, SttConfig, WakeConfig};
+use sohi_core::config::{ReducedMotion, SttConfig, TtsConfig, WakeConfig};
 use sohi_core::geometry::{BASE_DPI, RectPx, head_window_rect};
 use sohi_core::interaction::Event as TextEvent;
 use sohi_core::visibility::Input;
@@ -45,6 +45,8 @@ pub struct Options {
     pub user_name: String,
     /// `[stt]`.
     pub stt: SttConfig,
+    /// `[tts]`.
+    pub tts: TtsConfig,
 }
 
 /// Everything the UI thread owns.
@@ -105,6 +107,7 @@ impl App {
                 fallback_model: options.llm_fallback_model.clone(),
                 user_name: options.user_name.clone(),
                 stt: options.stt.clone(),
+                tts: options.tts.clone(),
                 follow_up: options.wake.follow_up,
             },
         );

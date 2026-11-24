@@ -202,6 +202,8 @@ fn every_event_in_every_state_is_handled() {
                 text: "d".into(),
             },
             Event::LlmDone { turn: 1 },
+            Event::SpeakingStarted { turn: 1 },
+            Event::PlaybackDone { turn: 1 },
             Event::TurnFailed {
                 turn: 1,
                 message: "m".into(),
@@ -280,7 +282,9 @@ fn a_voice_turn_runs_through_to_a_reply() {
         ]
     );
     assert_eq!(m.state(), State::Thinking { turn });
-    m.step(Event::LlmDone { turn });
+    assert_eq!(m.step(Event::LlmDone { turn }), []);
+    assert_eq!(m.state(), State::Thinking { turn });
+    m.step(Event::PlaybackDone { turn });
     assert_eq!(m.state(), State::TextEntry);
 }
 
@@ -371,7 +375,9 @@ fn following_up(m: &mut Interaction) -> u64 {
         turn,
         text: "hello".into(),
     });
-    let effects = m.step(Event::LlmDone { turn });
+    m.step(Event::SpeakingStarted { turn });
+    assert_eq!(m.step(Event::LlmDone { turn }), [], "still speaking");
+    let effects = m.step(Event::PlaybackDone { turn });
     let next = turn + 1;
     assert_eq!(
         effects,
@@ -436,6 +442,7 @@ fn a_focused_pill_gets_no_follow_up() {
         has_input: false,
     });
     m.step(Event::LlmDone { turn });
+    m.step(Event::PlaybackDone { turn });
     assert_eq!(m.state(), State::TextEntry);
 }
 
@@ -450,4 +457,140 @@ fn escape_ends_a_follow_up() {
     // The next wake is a fresh one: silence retracts.
     let turn = listening(&mut m);
     assert!(m.step(Event::NoSpeech { turn }).contains(&Effect::Retract));
+}
+
+/// A voice turn whose reply is being spoken.
+fn speaking(m: &mut Interaction) -> u64 {
+    let turn = listening(m);
+    m.step(Event::SpeechEnded { turn });
+    m.step(Event::Transcript {
+        turn,
+        text: "hello".into(),
+    });
+    assert_eq!(
+        m.step(Event::SpeakingStarted { turn }),
+        [Effect::SetVisual(VisualState::Speaking)]
+    );
+    assert_eq!(m.state(), State::Speaking { turn });
+    turn
+}
+
+#[test]
+fn the_reply_keeps_arriving_while_spoken() {
+    let mut m = Interaction::new();
+    let turn = speaking(&mut m);
+    let delta = Event::LlmDelta {
+        turn,
+        text: "More.".into(),
+    };
+    assert_eq!(m.step(delta), [Effect::AppendBubble("More.".into())]);
+    assert_eq!(m.step(Event::LlmDone { turn }), []);
+    assert_eq!(m.state(), State::Speaking { turn });
+    assert_eq!(
+        m.step(Event::PlaybackDone { turn }),
+        [
+            Effect::SetVisual(VisualState::Idle),
+            Effect::Keep(RetractRule::ReplyDone)
+        ]
+    );
+}
+
+#[test]
+fn a_wake_or_a_click_barges_in() {
+    for event in [Event::VoiceWake, Event::HeadClicked] {
+        let mut m = Interaction::new().with_follow_up(true);
+        let turn = speaking(&mut m);
+        let effects = m.step(event);
+        assert_eq!(effects[0], Effect::CancelTurn { turn });
+        assert!(effects.contains(&Effect::StartListening { turn: turn + 1 }));
+        assert_eq!(m.state(), State::Listening { turn: turn + 1 });
+        // What the old turn still says changes nothing.
+        assert_eq!(m.step(Event::PlaybackDone { turn }), []);
+    }
+}
+
+#[test]
+fn a_click_during_a_typed_turn_shows_the_pill() {
+    let mut m = Interaction::new();
+    submitted(&mut m, "hi");
+    assert_eq!(
+        m.step(Event::HeadClicked),
+        [Effect::ShowPill { focus: true }]
+    );
+}
+
+/// Half-duplex (spec §5.5): the mic never opens while a reply is spoken,
+/// unless the same step cancels the reply first.
+#[test]
+fn the_mic_stays_closed_while_speaking() {
+    let events = |turn| {
+        [
+            Event::TextHotkey,
+            Event::HeadClicked,
+            Event::VoiceWake,
+            Event::TextSubmitted("t".into()),
+            Event::SpeechStarted { turn },
+            Event::SpeechEnded { turn },
+            Event::NoSpeech { turn },
+            Event::Transcript {
+                turn,
+                text: "x".into(),
+            },
+            Event::LlmDelta {
+                turn,
+                text: "x".into(),
+            },
+            Event::LlmDone { turn },
+            Event::SpeakingStarted { turn },
+            Event::TurnFailed {
+                turn,
+                message: "m".into(),
+            },
+            Event::ErrorShown,
+            Event::PillFocus {
+                focused: true,
+                has_input: true,
+            },
+            Event::Escape,
+            Event::HeadGone,
+        ]
+    };
+    for event in events(1) {
+        let mut m = Interaction::new().with_follow_up(true);
+        let turn = speaking(&mut m);
+        assert_eq!(turn, 1);
+        let effects = m.step(event.clone());
+        let cancelled = effects
+            .iter()
+            .position(|e| *e == Effect::CancelTurn { turn });
+        let opened = effects
+            .iter()
+            .position(|e| matches!(e, Effect::StartListening { .. }));
+        assert!(
+            opened.is_none() || cancelled.is_some_and(|c| Some(c) < opened),
+            "{event:?}: {effects:?}"
+        );
+    }
+}
+
+#[test]
+fn typing_over_the_reply_replaces_it() {
+    let mut m = Interaction::new();
+    let turn = speaking(&mut m);
+    assert_eq!(m.step(Event::TextSubmitted(" ".into())), []);
+    let effects = m.step(Event::TextSubmitted("instead".into()));
+    assert_eq!(effects[0], Effect::CancelTurn { turn });
+    assert_eq!(m.state(), State::Thinking { turn: turn + 1 });
+    assert!(!m.voice_active());
+}
+
+#[test]
+fn escape_stops_speaking() {
+    let mut m = Interaction::new().with_follow_up(true);
+    let turn = speaking(&mut m);
+    assert!(m.voice_active());
+    let effects = m.step(Event::Escape);
+    assert_eq!(effects[0], Effect::CancelTurn { turn });
+    assert!(effects.contains(&Effect::Retract));
+    assert_eq!(m.state(), State::Idle);
 }
